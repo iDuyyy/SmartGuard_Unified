@@ -32,12 +32,12 @@ class FusionResult {
 /// SensorFusionService — Kết hợp dữ liệu cảm biến gia tốc + ML âm thanh (TFLite)
 /// để tính điểm nguy cơ và kích hoạt chuỗi báo động tự động.
 ///
-/// Thuật toán trọng số:
+/// Thuật toán trọng số kết hợp Peak + Synergy:
 ///   Motion  : 40%
 ///   Sound   : 40%
 ///   Vision  : 20%
 ///
-/// Khi `fusedScore > triggerThreshold` → kích hoạt AlertOrchestrator.
+/// Khi `fusedScore >= triggerThreshold` → kích hoạt AlertOrchestrator.
 class SensorFusionService {
   // Trọng số
   static const double _wMotion = 0.40;
@@ -126,9 +126,17 @@ class SensorFusionService {
     // soundConfidence đã là điểm nguy cơ có trọng số (nhiễu nền ≈ 0)
     final effectiveSoundScore = soundConfidence;
 
-    final fused = _wMotion * _motionScore +
+    final weighted = _wMotion * _motionScore +
         _wSound  * effectiveSoundScore +
         _wVision * visionScore;
+
+    // Kết hợp Weighted Synergy với Peak Detection:
+    // Nếu chỉ 1 cảm biến phát hiện tín hiệu nguy hiểm cực mạnh (ví dụ kính vỡ 90%
+    // khi điện thoại đặt cố định trên bàn, hoặc rung lắc mạnh trong phòng yên tĩnh),
+    // điểm đơn lẻ cao vẫn vượt qua được triggerThreshold (0.65), đồng thời đa cảm biến
+    // cùng kích hoạt sẽ đẩy điểm lên ngưỡng Critical nhanh hơn.
+    final peak = max(_motionScore, max(effectiveSoundScore, visionScore));
+    final fused = max(weighted, peak * 0.85 + weighted * 0.25).clamp(0.0, 1.0);
 
     final severity = _toSeverity(fused);
     final reason   = _buildReason();
@@ -211,7 +219,9 @@ class AlertOrchestrator {
     final now = DateTime.now();
     if (_isDispatching) return;
     if (_lastDispatch != null &&
-        now.difference(_lastDispatch!).inSeconds < _cooldownSeconds) return;
+        now.difference(_lastDispatch!).inSeconds < _cooldownSeconds) {
+      return;
+    }
 
     _isDispatching = true;
     _lastDispatch = now;
@@ -304,4 +314,3 @@ class AlertOrchestrator {
     }
   }
 }
-

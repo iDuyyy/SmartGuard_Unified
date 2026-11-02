@@ -20,7 +20,11 @@ namespace SmartGuard.API.Controllers
             _db = db;
         }
 
-        private Guid CurrentUserId => Guid.Parse(User.FindFirstValue(ClaimTypes.NameIdentifier)!);
+        private Guid CurrentUserId =>
+            Guid.TryParse(User.FindFirstValue(ClaimTypes.NameIdentifier) ?? User.FindFirstValue("sub"), out var id)
+                ? id
+                : Guid.Empty;
+
         private bool IsAdmin => User.IsInRole("Admin");
 
         [HttpGet]
@@ -43,10 +47,17 @@ namespace SmartGuard.API.Controllers
         [HttpPost]
         public async Task<IActionResult> CreateZone([FromBody] CreateZoneDto dto)
         {
+            var userId = CurrentUserId;
+            if (userId == Guid.Empty) return Unauthorized();
+
+            var zoneName = (dto.Name ?? string.Empty).Trim();
+            if (string.IsNullOrWhiteSpace(zoneName))
+                return BadRequest(new { message = "Tên khu vực không được để trống." });
+
             var zone = new Zone
             {
-                OwnerId = CurrentUserId,
-                Name = dto.Name.Trim(),
+                OwnerId = userId,
+                Name = zoneName,
                 Description = dto.Description?.Trim() ?? string.Empty
             };
 
@@ -59,10 +70,12 @@ namespace SmartGuard.API.Controllers
         [HttpPut("{id:guid}")]
         public async Task<IActionResult> UpdateZone(Guid id, [FromBody] UpdateZoneDto dto)
         {
-            var zone = await _db.Zones.FirstOrDefaultAsync(z => z.Id == id && (IsAdmin || z.OwnerId == CurrentUserId));
+            var userId = CurrentUserId;
+            var zone = await _db.Zones.FirstOrDefaultAsync(z => z.Id == id && (IsAdmin || z.OwnerId == userId));
             if (zone == null) return NotFound(new { message = "Không tìm thấy khu vực." });
 
-            zone.Name = dto.Name.Trim();
+            var zoneName = (dto.Name ?? string.Empty).Trim();
+            if (!string.IsNullOrWhiteSpace(zoneName)) zone.Name = zoneName;
             zone.Description = dto.Description?.Trim() ?? string.Empty;
 
             await _db.SaveChangesAsync();
@@ -72,12 +85,17 @@ namespace SmartGuard.API.Controllers
         [HttpDelete("{id:guid}")]
         public async Task<IActionResult> DeleteZone(Guid id)
         {
-            var zone = await _db.Zones.FirstOrDefaultAsync(z => z.Id == id && (IsAdmin || z.OwnerId == CurrentUserId));
+            var userId = CurrentUserId;
+            var zone = await _db.Zones.FirstOrDefaultAsync(z => z.Id == id && (IsAdmin || z.OwnerId == userId));
             if (zone == null) return NotFound(new { message = "Không tìm thấy khu vực." });
 
             // Gỡ bỏ liên kết ZoneId của các thiết bị thuộc Zone này
             var devices = await _db.Devices.Where(d => d.ZoneId == id).ToListAsync();
             foreach (var d in devices) d.ZoneId = null;
+
+            // Xóa các quy tắc thích ứng liên kết với Zone này
+            var zoneRules = await _db.AdaptiveZoneRules.Where(r => r.ZoneId == id).ToListAsync();
+            if (zoneRules.Count > 0) _db.AdaptiveZoneRules.RemoveRange(zoneRules);
 
             _db.Zones.Remove(zone);
             await _db.SaveChangesAsync();

@@ -29,14 +29,18 @@ namespace SmartGuard.API.Controllers
             _logger = logger;
         }
 
-        private Guid CurrentUserId => Guid.Parse(User.FindFirstValue(ClaimTypes.NameIdentifier)!);
+        private Guid CurrentUserId =>
+            Guid.TryParse(User.FindFirstValue(ClaimTypes.NameIdentifier) ?? User.FindFirstValue("sub"), out var id)
+                ? id
+                : Guid.Empty;
 
         [HttpGet("profiles")]
         public async Task<IActionResult> GetProfiles()
         {
             var userId = CurrentUserId;
+            if (userId == Guid.Empty) return Unauthorized();
 
-            // Đảm bảo người dùng luôn có sẵn 3 chế độ mặc định (Home, Away, Night)
+            // Đảm bảo người dùng luôn có sẵn 3 chế độ mặc định (Home, Away, Night) và đồng bộ quy tắc cho mọi phân vùng mới
             await _ruleEngine.InitializeDefaultProfilesForUserAsync(userId);
 
             var profiles = await _db.AdaptiveProfiles
@@ -125,19 +129,20 @@ namespace SmartGuard.API.Controllers
                         existingRule.EnableMonitoring = rDto.EnableMonitoring;
                         existingRule.EnableAlarmSound = rDto.EnableAlarmSound;
                         existingRule.EnableDiscordNotification = rDto.EnableDiscordNotification;
-                        existingRule.CustomSensitivity = rDto.CustomSensitivity;
+                        existingRule.CustomSensitivity = Math.Clamp(rDto.CustomSensitivity, 0.1, 3.0);
                     }
                     else
                     {
-                        profile.ZoneRules.Add(new AdaptiveZoneRule
+                        var newRule = new AdaptiveZoneRule
                         {
                             ProfileId = profile.Id,
                             ZoneId = rDto.ZoneId,
                             EnableMonitoring = rDto.EnableMonitoring,
                             EnableAlarmSound = rDto.EnableAlarmSound,
                             EnableDiscordNotification = rDto.EnableDiscordNotification,
-                            CustomSensitivity = rDto.CustomSensitivity
-                        });
+                            CustomSensitivity = Math.Clamp(rDto.CustomSensitivity, 0.1, 3.0)
+                        };
+                        _db.AdaptiveZoneRules.Add(newRule);
                     }
                 }
             }
@@ -150,6 +155,7 @@ namespace SmartGuard.API.Controllers
         public async Task<IActionResult> SnoozeActiveProfile([FromBody] SnoozeProfileDto dto)
         {
             var userId = CurrentUserId;
+            await _ruleEngine.InitializeDefaultProfilesForUserAsync(userId);
             var activeProfile = await _db.AdaptiveProfiles.FirstOrDefaultAsync(p => p.UserId == userId && p.IsActive);
             if (activeProfile == null)
                 return BadRequest(new { message = "Chưa có chế độ an ninh nào đang kích hoạt để tạm dừng." });
@@ -173,7 +179,7 @@ namespace SmartGuard.API.Controllers
         {
             var userId = CurrentUserId;
             var activeProfile = await _db.AdaptiveProfiles.FirstOrDefaultAsync(p => p.UserId == userId && p.IsActive);
-            if (activeProfile == null) return NotFound();
+            if (activeProfile == null) return NotFound(new { message = "Không tìm thấy chế độ an ninh đang kích hoạt." });
 
             activeProfile.SnoozeUntil = null;
             await _db.SaveChangesAsync();

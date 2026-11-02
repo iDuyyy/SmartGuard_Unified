@@ -2,6 +2,7 @@ using System.Security.Claims;
 using System.Security.Cryptography;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.EntityFrameworkCore;
 using SmartGuard.API.Data;
 using SmartGuard.API.DTOs;
@@ -13,6 +14,7 @@ namespace SmartGuard.API.Controllers
 {
     [ApiController]
     [Route("api/[controller]")]
+    [EnableRateLimiting("auth-rate-limit")]
     public class AuthController : ControllerBase
     {
         private readonly SmartGuardDbContext _db;
@@ -32,11 +34,22 @@ namespace SmartGuard.API.Controllers
             _logger = logger;
         }
 
+        private static string NormalizeRole(string? rawRole)
+        {
+            if (string.IsNullOrWhiteSpace(rawRole)) return "Owner";
+            if (rawRole.Equals("Admin", StringComparison.OrdinalIgnoreCase)) return "Admin";
+            if (rawRole.Equals("Member", StringComparison.OrdinalIgnoreCase)) return "Member";
+            return "Owner";
+        }
+
         [HttpPost("register")]
         public async Task<IActionResult> Register([FromBody] RegisterDto dto)
         {
-            var normalizedEmail = dto.Email.Trim().ToLowerInvariant();
-            var normalizedUsername = dto.Username.Trim().ToLowerInvariant();
+            var normalizedEmail = (dto.Email ?? string.Empty).Trim().ToLowerInvariant();
+            var normalizedUsername = (dto.Username ?? string.Empty).Trim().ToLowerInvariant();
+
+            if (string.IsNullOrWhiteSpace(normalizedEmail) || string.IsNullOrWhiteSpace(normalizedUsername))
+                return BadRequest(new { message = "Email và tên đăng nhập không được để trống." });
 
             if (await _db.Users.AnyAsync(u => u.Email == normalizedEmail))
                 return BadRequest(new { message = "Email này đã được sử dụng." });
@@ -44,7 +57,7 @@ namespace SmartGuard.API.Controllers
             if (await _db.Users.AnyAsync(u => u.Username == normalizedUsername))
                 return BadRequest(new { message = "Tên đăng nhập này đã tồn tại." });
 
-            var role = dto.Role.Equals("Admin", StringComparison.OrdinalIgnoreCase) ? "Admin" : "Owner";
+            var role = NormalizeRole(dto.Role);
 
             var user = new User
             {
@@ -65,10 +78,10 @@ namespace SmartGuard.API.Controllers
         [HttpPost("login")]
         public async Task<IActionResult> Login([FromBody] LoginDto dto)
         {
-            var identifier = dto.Identifier.Trim().ToLowerInvariant();
+            var identifier = (dto.Identifier ?? string.Empty).Trim().ToLowerInvariant();
             var user = await _db.Users.FirstOrDefaultAsync(u => u.Email == identifier || u.Username == identifier);
 
-            if (user == null || !_tokenService.VerifyPassword(dto.Password, user.PasswordHash))
+            if (user == null || !_tokenService.VerifyPassword(dto.Password ?? string.Empty, user.PasswordHash))
                 return Unauthorized(new { message = "Tài khoản hoặc mật khẩu không chính xác." });
 
             if (user.IsLocked)
@@ -117,7 +130,8 @@ namespace SmartGuard.API.Controllers
             if (challenge.Attempts >= 5)
                 return BadRequest(new { message = "Bạn đã thử sai quá 5 lần. Vui lòng đăng nhập lại." });
 
-            if (!_tokenService.VerifyPassword(dto.Code, challenge.CodeHash))
+            var cleanCode = (dto.Code ?? string.Empty).Trim();
+            if (!_tokenService.VerifyPassword(cleanCode, challenge.CodeHash))
             {
                 challenge.Attempts++;
                 await _db.SaveChangesAsync();
@@ -127,6 +141,9 @@ namespace SmartGuard.API.Controllers
             challenge.UsedAt = DateTime.UtcNow;
             var user = await _db.Users.FindAsync(challenge.UserId);
             if (user == null) return NotFound(new { message = "Không tìm thấy người dùng." });
+
+            if (user.IsLocked)
+                return StatusCode(StatusCodes.Status403Forbidden, new { message = "Tài khoản của bạn đã bị khóa bởi quản trị viên." });
 
             await _db.SaveChangesAsync();
 
@@ -143,9 +160,10 @@ namespace SmartGuard.API.Controllers
 
         [HttpGet("me")]
         [Authorize]
+        [DisableRateLimiting]
         public async Task<IActionResult> GetProfile()
         {
-            var userIdStr = User.FindFirstValue(ClaimTypes.NameIdentifier);
+            var userIdStr = User.FindFirstValue(ClaimTypes.NameIdentifier) ?? User.FindFirstValue("sub");
             if (!Guid.TryParse(userIdStr, out var userId)) return Unauthorized();
 
             var user = await _db.Users.FindAsync(userId);

@@ -480,6 +480,70 @@ namespace SmartGuard.Tests
             Assert.Empty(db.MemberAccesses);
         }
 
+        [Fact]
+        public async Task Test_SharedDevices_AllDevicesScope_ZoneBackfill_And_CascadeDelete()
+        {
+            using var db = CreateInMemoryDb();
+            var owner1 = new User { Email = "owner1@test.com", Username = "owner1", Role = "Owner" };
+            var owner2 = new User { Email = "owner2_isolated@test.com", Username = "owner2", Role = "Owner" };
+            var member = new User { Email = "family@test.com", Username = "family", Role = "Member" };
+            db.Users.AddRange(owner1, owner2, member);
+
+            var cam1 = new GuardDevice { OwnerId = owner1.Id, Name = "Cam Sân Thượng Owner1", IsArmed = true };
+            var cam2 = new GuardDevice { OwnerId = owner2.Id, Name = "Cam Bí Mật Owner2", IsArmed = true };
+            db.Devices.AddRange(cam1, cam2);
+            await db.SaveChangesAsync();
+
+            // 1. Chia sẻ toàn bộ thiết bị của owner1 (DeviceId = null) cho member
+            var membersCtrl = new MembersController(db) { ControllerContext = CreateControllerContext(owner1) };
+            await membersCtrl.ShareDevice(new ShareAccessDto(member.Email, null, true));
+
+            // 2. Member gọi GetDevices -> Chỉ thấy thiết bị của owner1, KHÔNG thấy thiết bị của owner2
+            var devicesCtrlMember = new DevicesController(db, NullLogger<DevicesController>.Instance)
+            {
+                ControllerContext = CreateControllerContext(member)
+            };
+            var memberDevsRes = await devicesCtrlMember.GetDevices() as OkObjectResult;
+            Assert.NotNull(memberDevsRes);
+            var memberDevs = (memberDevsRes.Value as IEnumerable<DeviceResponseDto>)!.ToList();
+            Assert.Single(memberDevs);
+            Assert.Equal(cam1.Id, memberDevs[0].Id);
+
+            // Member truy cập hoặc điều khiển cam2 của owner2 -> Phải bị chặn (NotFound để chống dò quét ID giữa các chủ nhà)
+            var notFoundRes = await devicesCtrlMember.GetDevice(cam2.Id);
+            Assert.IsType<NotFoundObjectResult>(notFoundRes);
+            var notFoundToggleRes = await devicesCtrlMember.ToggleArm(cam2.Id);
+            Assert.IsType<NotFoundObjectResult>(notFoundToggleRes);
+
+            // 3. Kiểm tra tự động bổ sung quy tắc (ZoneRule Backfill) khi tạo Zone mới sau khi đã khởi tạo AdaptiveProfile
+            var ruleEngine = new SmartGuard.API.Services.Adaptive.AdaptiveRuleEngine(db, NullLogger<SmartGuard.API.Services.Adaptive.AdaptiveRuleEngine>.Instance);
+            await ruleEngine.InitializeDefaultProfilesForUserAsync(owner1.Id);
+
+            var newZone = new Zone { OwnerId = owner1.Id, Name = "Phòng ngủ tầng 2" };
+            db.Zones.Add(newZone);
+            await db.SaveChangesAsync();
+
+            await ruleEngine.InitializeDefaultProfilesForUserAsync(owner1.Id);
+            var homeProfile = await db.AdaptiveProfiles.Include(p => p.ZoneRules)
+                .FirstAsync(p => p.UserId == owner1.Id && p.ModeName == "Home");
+            var backfilledRule = Assert.Single(homeProfile.ZoneRules!, r => r.ZoneId == newZone.Id);
+            Assert.False(backfilledRule.EnableMonitoring); // Phòng ngủ tự động tắt giám sát ở chế độ Ở nhà
+
+            // 4. Kiểm tra xóa thiết bị có chứa ảnh bằng chứng (DeleteDevice) không bị lỗi khóa ngoại
+            var alert = new AlertEvent { DeviceId = cam1.Id, TriggerReason = "NGUOI_LA", Severity = "Critical" };
+            db.AlertEvents.Add(alert);
+            db.EvidenceImages.Add(new EvidenceImage { DeviceId = cam1.Id, AlertEventId = alert.Id, FileName = "test.jpg", RelativeUrl = "/uploads/evidence/test.jpg" });
+            await db.SaveChangesAsync();
+
+            var devicesCtrlOwner = new DevicesController(db, NullLogger<DevicesController>.Instance)
+            {
+                ControllerContext = CreateControllerContext(owner1)
+            };
+            var delDevRes = await devicesCtrlOwner.DeleteDevice(cam1.Id);
+            Assert.IsType<OkObjectResult>(delDevRes);
+            Assert.Empty(db.EvidenceImages);
+        }
+
         private static ControllerContext CreateControllerContext(User user)
         {
             var claims = new ClaimsPrincipal(new ClaimsIdentity(new[]

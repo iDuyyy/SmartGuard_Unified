@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Security.Claims;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
@@ -21,6 +22,19 @@ namespace SmartGuard.API.Controllers
         {
             _db = db;
             _tokenService = tokenService;
+        }
+
+        private Guid CurrentUserId =>
+            Guid.TryParse(User.FindFirstValue(ClaimTypes.NameIdentifier) ?? User.FindFirstValue("sub"), out var id)
+                ? id
+                : Guid.Empty;
+
+        private static string NormalizeRole(string? rawRole)
+        {
+            if (string.IsNullOrWhiteSpace(rawRole)) return "Owner";
+            if (rawRole.Equals("Admin", StringComparison.OrdinalIgnoreCase)) return "Admin";
+            if (rawRole.Equals("Member", StringComparison.OrdinalIgnoreCase)) return "Member";
+            return "Owner";
         }
 
         [HttpGet("stats")]
@@ -67,11 +81,13 @@ namespace SmartGuard.API.Controllers
 
             if (!string.IsNullOrWhiteSpace(dto.Role))
             {
-                user.Role = dto.Role.Equals("Admin", StringComparison.OrdinalIgnoreCase) ? "Admin" : "Owner";
+                user.Role = NormalizeRole(dto.Role);
             }
 
             if (dto.IsLocked.HasValue)
             {
+                if (dto.IsLocked.Value && user.Id == CurrentUserId)
+                    return BadRequest(new { message = "Bạn không thể tự khóa tài khoản quản trị đang đăng nhập." });
                 user.IsLocked = dto.IsLocked.Value;
             }
 
@@ -83,8 +99,11 @@ namespace SmartGuard.API.Controllers
         [HttpPost("users")]
         public async Task<IActionResult> CreateUser([FromBody] CreateUserAdminDto dto)
         {
-            var normalizedEmail = dto.Email.Trim().ToLowerInvariant();
-            var normalizedUsername = dto.Username.Trim().ToLowerInvariant();
+            var normalizedEmail = (dto.Email ?? string.Empty).Trim().ToLowerInvariant();
+            var normalizedUsername = (dto.Username ?? string.Empty).Trim().ToLowerInvariant();
+
+            if (string.IsNullOrWhiteSpace(normalizedEmail) || string.IsNullOrWhiteSpace(normalizedUsername))
+                return BadRequest(new { message = "Email và tên đăng nhập không được để trống." });
 
             if (await _db.Users.AnyAsync(u => u.Email == normalizedEmail))
                 return BadRequest(new { message = "Email này đã được sử dụng." });
@@ -92,7 +111,7 @@ namespace SmartGuard.API.Controllers
             if (await _db.Users.AnyAsync(u => u.Username == normalizedUsername))
                 return BadRequest(new { message = "Tên đăng nhập này đã tồn tại." });
 
-            var role = dto.Role.Equals("Admin", StringComparison.OrdinalIgnoreCase) ? "Admin" : "Owner";
+            var role = NormalizeRole(dto.Role);
 
             var user = new User
             {
@@ -141,7 +160,7 @@ namespace SmartGuard.API.Controllers
 
             if (!string.IsNullOrWhiteSpace(dto.Role))
             {
-                user.Role = dto.Role.Equals("Admin", StringComparison.OrdinalIgnoreCase) ? "Admin" : "Owner";
+                user.Role = NormalizeRole(dto.Role);
             }
 
             if (!string.IsNullOrWhiteSpace(dto.Password))
@@ -151,6 +170,8 @@ namespace SmartGuard.API.Controllers
 
             if (dto.IsLocked.HasValue)
             {
+                if (dto.IsLocked.Value && user.Id == CurrentUserId)
+                    return BadRequest(new { message = "Bạn không thể tự khóa tài khoản quản trị đang đăng nhập." });
                 user.IsLocked = dto.IsLocked.Value;
             }
 
@@ -169,8 +190,39 @@ namespace SmartGuard.API.Controllers
         [HttpDelete("users/{id:guid}")]
         public async Task<IActionResult> DeleteUser(Guid id)
         {
+            if (id == CurrentUserId)
+                return BadRequest(new { message = "Bạn không thể tự xóa tài khoản quản trị đang đăng nhập." });
+
             var user = await _db.Users.FindAsync(id);
             if (user == null) return NotFound(new { message = "Không tìm thấy người dùng." });
+
+            // Dọn dẹp các bảng liên kết có DeleteBehavior.Restrict hoặc không có FK trực tiếp để tránh lỗi SQL FK constraint
+            var memberLinks = await _db.MemberAccesses
+                .Where(m => m.MemberUserId == id || m.OwnerId == id)
+                .ToListAsync();
+            if (memberLinks.Count > 0) _db.MemberAccesses.RemoveRange(memberLinks);
+
+            var profiles = await _db.AdaptiveProfiles
+                .Where(p => p.UserId == id)
+                .ToListAsync();
+            if (profiles.Count > 0) _db.AdaptiveProfiles.RemoveRange(profiles);
+
+            var otps = await _db.OtpChallenges
+                .Where(o => o.UserId == id)
+                .ToListAsync();
+            if (otps.Count > 0) _db.OtpChallenges.RemoveRange(otps);
+
+            var userDeviceIds = await _db.Devices
+                .Where(d => d.OwnerId == id)
+                .Select(d => d.Id)
+                .ToListAsync();
+            if (userDeviceIds.Count > 0)
+            {
+                var evidences = await _db.EvidenceImages
+                    .Where(e => userDeviceIds.Contains(e.DeviceId))
+                    .ToListAsync();
+                if (evidences.Count > 0) _db.EvidenceImages.RemoveRange(evidences);
+            }
 
             _db.Users.Remove(user);
             await _db.SaveChangesAsync();

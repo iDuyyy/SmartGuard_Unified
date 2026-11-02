@@ -1,3 +1,4 @@
+using System.Security.Claims;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
@@ -31,6 +32,13 @@ namespace SmartGuard.API.Controllers
             _logger = logger;
         }
 
+        private Guid CurrentUserId =>
+            Guid.TryParse(User.FindFirstValue(ClaimTypes.NameIdentifier) ?? User.FindFirstValue("sub"), out var id)
+                ? id
+                : Guid.Empty;
+
+        private bool IsAdmin => User.IsInRole("Admin");
+
         [HttpPost("upload")]
         [Authorize]
         [Consumes("multipart/form-data")]
@@ -40,7 +48,8 @@ namespace SmartGuard.API.Controllers
             if (dto.File == null || dto.File.Length == 0)
                 return BadRequest(new { message = "Không tìm thấy file ảnh tải lên." });
 
-            var ext = Path.GetExtension(dto.File.FileName).ToLowerInvariant();
+            var ext = Path.GetExtension(dto.File.FileName ?? string.Empty).ToLowerInvariant();
+            if (string.IsNullOrEmpty(ext)) ext = ".jpg";
             if (ext != ".jpg" && ext != ".jpeg" && ext != ".png")
                 return BadRequest(new { message = "Định dạng file không hợp lệ. Chỉ chấp nhận JPG/PNG." });
 
@@ -51,7 +60,7 @@ namespace SmartGuard.API.Controllers
             var uniqueFileName = $"{Guid.NewGuid():N}_{DateTime.UtcNow:yyyyMMdd_HHmmss}{ext}";
             var fullPath = Path.Combine(evidenceDir, uniqueFileName);
 
-            using (var stream = new FileStream(fullPath, FileMode.Create))
+            await using (var stream = new FileStream(fullPath, FileMode.Create))
             {
                 await dto.File.CopyToAsync(stream);
             }
@@ -95,7 +104,22 @@ namespace SmartGuard.API.Controllers
         [Authorize]
         public async Task<IActionResult> GetEvidenceList([FromQuery] int limit = 30)
         {
-            var list = await _db.EvidenceImages
+            var userId = CurrentUserId;
+            var accessibleDeviceIds = IsAdmin
+                ? null
+                : await _db.Devices
+                    .Where(d => d.OwnerId == userId ||
+                        _db.MemberAccesses.Any(m => m.MemberUserId == userId && m.OwnerId == d.OwnerId && (m.DeviceId == d.Id || m.DeviceId == null)))
+                    .Select(d => d.Id)
+                    .ToListAsync();
+
+            var query = _db.EvidenceImages.AsQueryable();
+            if (!IsAdmin && accessibleDeviceIds != null)
+            {
+                query = query.Where(e => accessibleDeviceIds.Contains(e.DeviceId));
+            }
+
+            var list = await query
                 .OrderByDescending(e => e.UploadedAt)
                 .Take(Math.Clamp(limit, 1, 100))
                 .Select(e => new
@@ -116,13 +140,20 @@ namespace SmartGuard.API.Controllers
         [Authorize]
         public async Task<IActionResult> DeleteImage(Guid id)
         {
+            var userId = CurrentUserId;
             var evidence = await _db.EvidenceImages.FindAsync(id);
             if (evidence == null) return NotFound(new { message = "Không tìm thấy ảnh này." });
+
+            if (!IsAdmin)
+            {
+                var ownsDevice = await _db.Devices.AnyAsync(d => d.Id == evidence.DeviceId && d.OwnerId == userId);
+                if (!ownsDevice) return Forbid();
+            }
 
             try
             {
                 var webRoot = _env.WebRootPath ?? Path.Combine(_env.ContentRootPath, "wwwroot");
-                var fullPath = Path.Combine(webRoot, "evidence", evidence.FileName);
+                var fullPath = Path.Combine(webRoot, "evidence", Path.GetFileName(evidence.FileName));
                 if (System.IO.File.Exists(fullPath))
                 {
                     System.IO.File.Delete(fullPath);

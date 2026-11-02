@@ -12,8 +12,8 @@ using SmartGuard.API.Data;
 namespace SmartGuard.API.Migrations
 {
     [DbContext(typeof(SmartGuardDbContext))]
-    [Migration("20261028023926_Initial")]
-    partial class Initial
+    [Migration("20261102173009_InitialCreate")]
+    partial class InitialCreate
     {
         /// <inheritdoc />
         protected override void BuildTargetModel(ModelBuilder modelBuilder)

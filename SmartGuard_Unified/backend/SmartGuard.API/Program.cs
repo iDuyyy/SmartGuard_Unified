@@ -150,7 +150,8 @@ app.Lifetime.ApplicationStarted.Register(() =>
 
         try
         {
-            await db.Database.MigrateAsync();
+            // Bỏ dòng MigrateAsync() vì database Somee đã được nạp cấu trúc bằng script T-SQL
+            // await db.Database.MigrateAsync(); 
 
             if (!await db.Users.AnyAsync(u => u.Role == "Admin"))
             {
@@ -169,11 +170,10 @@ app.Lifetime.ApplicationStarted.Register(() =>
         }
         catch (Exception ex)
         {
-            logger.LogError(ex, "Lỗi trong quá trình khởi tạo CSDL.");
+            logger.LogWarning(ex, "Bỏ qua quá trình seed dữ liệu tự động do giới hạn kết nối hoặc quyền truy cập CSDL.");
         }
     });
 });
-
 // 8. Cấu hình HTTP Pipeline
 if (app.Environment.IsDevelopment())
 {

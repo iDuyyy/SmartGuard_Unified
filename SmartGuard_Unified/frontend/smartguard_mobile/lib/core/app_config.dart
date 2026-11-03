@@ -2,7 +2,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 class AppConfig {
   static const String defaultTunnelUrl =
-      'https://2xlv8268-44321.asse.devtunnels.ms';
+      'https://smartguard-unified.onrender.com/';
   static const String defaultLanUrl = 'http://192.168.1.100:5235';
   static const String emulatorUrl = 'http://10.0.2.2:5235';
   static const String localhostUrl = 'https://localhost:44321';
@@ -14,12 +14,12 @@ class AppConfig {
 
   /// Danh sách các địa chỉ ứng viên để tự động dò tìm khi mất kết nối
   static List<String> get candidateUrls => <String>{
-        _activeBaseUrl,
-        localhostUrl,
-        'http://127.0.0.1:5235',
-        emulatorUrl,
-        defaultTunnelUrl,
-      }.toList();
+    _activeBaseUrl,
+    localhostUrl,
+    'http://127.0.0.1:5235',
+    emulatorUrl,
+    defaultTunnelUrl,
+  }.toList();
 
   static const double faceMatchThreshold = 0.80;
   static const double defaultMotionThreshold = 3.5;
@@ -35,7 +35,12 @@ class AppConfig {
     while (trimmed.endsWith('/')) {
       trimmed = trimmed.substring(0, trimmed.length - 1);
     }
-    for (final suffix in ['/api/status', '/api', '/swagger/index.html', '/swagger']) {
+    for (final suffix in [
+      '/api/status',
+      '/api',
+      '/swagger/index.html',
+      '/swagger',
+    ]) {
       if (trimmed.toLowerCase().endsWith(suffix)) {
         trimmed = trimmed.substring(0, trimmed.length - suffix.length);
       }
@@ -64,7 +69,9 @@ class AppConfig {
     try {
       final prefs = await SharedPreferences.getInstance();
       final saved = prefs.getString(_prefKeyBaseUrl);
-      if (saved != null && saved.trim().isNotEmpty && !saved.contains('192.168.2.6')) {
+      if (saved != null &&
+          saved.trim().isNotEmpty &&
+          !saved.contains('192.168.2.6')) {
         _activeBaseUrl = normalizeUrl(saved);
       } else {
         _activeBaseUrl = localhostUrl;

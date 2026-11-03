@@ -15,10 +15,10 @@ document.addEventListener('DOMContentLoaded', () => {
     adaptiveProfiles: [],
     activeProfile: 'Home',
     stats: {
-      connectedCameras: 2,
-      activeCameras: 2,
-      motionEventsToday: 7,
-      totalRecordings: 24
+      connectedCameras: 0,
+      activeCameras: 0,
+      motionEventsToday: 0,
+      totalRecordings: 0
     },
     filter: {
       eventSeverity: 'all',
@@ -306,23 +306,37 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   }
 
-  // Data Loading with Resilient Fallback
+  // Data Loading with Resilient Fallback (Only use mock data for unauthenticated visitors)
   async function loadInitialData() {
     try {
+      const isAuth = SmartGuardApi.isAuthenticated();
+
       // 1. Devices
       try {
         const devs = await SmartGuardApi.getDevices();
-        if (devs && devs.length > 0) state.devices = devs;
+        if (Array.isArray(devs)) {
+          state.devices = devs;
+        } else if (!isAuth) {
+          useDefaultDevices();
+        } else {
+          state.devices = [];
+        }
       } catch (err) {
-        useDefaultDevices();
+        state.devices = isAuth ? [] : useDefaultDevices();
       }
 
       // 2. Zones
       try {
         const z = await SmartGuardApi.getZones();
-        if (z && z.length > 0) state.zones = z;
+        if (Array.isArray(z)) {
+          state.zones = z;
+        } else if (!isAuth) {
+          useDefaultZones();
+        } else {
+          state.zones = [];
+        }
       } catch (err) {
-        useDefaultZones();
+        state.zones = isAuth ? [] : useDefaultZones();
       }
 
       // 3. Alerts
@@ -330,40 +344,42 @@ document.addEventListener('DOMContentLoaded', () => {
         const a = await SmartGuardApi.getAlertHistory(40);
         if (Array.isArray(a)) {
           state.alerts = a;
-        } else if (!SmartGuardApi.isAuthenticated()) {
+        } else if (!isAuth) {
           useDefaultAlerts();
         } else {
           state.alerts = [];
         }
       } catch (err) {
-        if (!SmartGuardApi.isAuthenticated()) {
-          useDefaultAlerts();
-        } else {
-          state.alerts = [];
-        }
+        state.alerts = isAuth ? [] : useDefaultAlerts();
       }
 
       // 4. Evidence / Recordings
       try {
         const recs = await SmartGuardApi.getEvidenceList(40);
-        if (recs && recs.length > 0) state.recordings = recs;
+        if (Array.isArray(recs)) {
+          state.recordings = recs;
+        } else if (!isAuth) {
+          useDefaultRecordings();
+        } else {
+          state.recordings = [];
+        }
       } catch (err) {
-        useDefaultRecordings();
+        state.recordings = isAuth ? [] : useDefaultRecordings();
       }
 
       // 5. Adaptive Profiles
       try {
         const profs = await SmartGuardApi.getAdaptiveProfiles();
-        if (profs && profs.length > 0) state.adaptiveProfiles = profs;
+        if (Array.isArray(profs) && profs.length > 0) state.adaptiveProfiles = profs;
       } catch {}
 
-      // 6. Admin stats
+      // 6. Admin stats (chỉ đồng bộ số thực)
       try {
         const st = await SmartGuardApi.getDashboardStats();
-        if (st) {
-          state.stats.connectedCameras = st.totalDevices || state.devices.length;
-          state.stats.activeCameras = st.activeArmedDevices || state.devices.filter(d => d.isArmed).length;
-          state.stats.motionEventsToday = st.totalAlertsToday || 7;
+        if (st && isAuth) {
+          state.stats.connectedCameras = st.totalDevices ?? state.devices.length;
+          state.stats.activeCameras = st.activeArmedDevices ?? state.devices.filter(d => d.isArmed).length;
+          state.stats.motionEventsToday = st.totalAlertsToday ?? state.alerts.length;
         }
       } catch {}
 
@@ -534,16 +550,50 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // View 1: Dashboard
   function renderDashboard() {
-    // 1. Stats Counter
+    // 1. Stats Counter (Hiển thị số liệu thực tế của tài khoản)
     const connEl = document.getElementById('statConnected');
     const armedEl = document.getElementById('statArmed');
     const motionEl = document.getElementById('statMotion');
     const recsEl = document.getElementById('statRecordings');
 
-    if (connEl) connEl.textContent = state.devices.length;
-    if (armedEl) armedEl.textContent = state.devices.filter(d => d.isArmed).length;
-    if (motionEl) motionEl.textContent = state.alerts.length || 7;
-    if (recsEl) recsEl.textContent = state.recordings.length || 24;
+    const connSub = document.getElementById('statConnectedSub');
+    const armedSub = document.getElementById('statArmedSub');
+    const motionSub = document.getElementById('statMotionSub');
+    const recsSub = document.getElementById('statRecordingsSub');
+
+    const totalDevs = state.devices.length;
+    const onlineDevs = state.devices.filter(d => isDeviceOnline(d.lastSeenAt)).length;
+    const armedDevs = state.devices.filter(d => d.isArmed).length;
+    const totalAlerts = state.alerts.length;
+    const totalRecs = state.recordings.length;
+
+    let totalRecMb = 0;
+    state.recordings.forEach(r => { totalRecMb += (r.sizeMb || 3.5); });
+
+    if (connEl) connEl.textContent = totalDevs;
+    if (armedEl) armedEl.textContent = armedDevs;
+    if (motionEl) motionEl.textContent = totalAlerts;
+    if (recsEl) recsEl.textContent = totalRecs;
+
+    if (connSub) {
+      connSub.textContent = totalDevs === 0 ? '0% Online' : `${Math.round((onlineDevs / totalDevs) * 100)}% Online`;
+      connSub.style.color = totalDevs > 0 && onlineDevs > 0 ? 'var(--success-green)' : 'var(--secondary-text)';
+    }
+
+    if (armedSub) {
+      armedSub.textContent = armedDevs > 0 ? 'Đang bảo vệ' : 'Chờ kích hoạt';
+      armedSub.style.color = armedDevs > 0 ? 'var(--success-green)' : 'var(--secondary-text)';
+    }
+
+    if (motionSub) {
+      motionSub.textContent = totalAlerts === 0 ? '0 Đã lọc' : `${totalAlerts} Đã phát hiện`;
+      motionSub.style.color = totalAlerts > 0 ? 'var(--warning-yellow)' : 'var(--secondary-text)';
+    }
+
+    if (recsSub) {
+      recsSub.textContent = totalRecs === 0 ? '0 MB Đã dùng' : (totalRecMb > 1024 ? `${(totalRecMb / 1024).toFixed(1)} GB Đã dùng` : `${totalRecMb.toFixed(1)} MB Đã dùng`);
+      recsSub.style.color = totalRecs > 0 ? 'var(--security-blue)' : 'var(--secondary-text)';
+    }
 
     // 2. Camera Grid in Dashboard
     const gridEl = document.getElementById('dashboardCameraGrid');
@@ -700,24 +750,38 @@ document.addEventListener('DOMContentLoaded', () => {
     const zonesListEl = document.getElementById('motionZonesContainer');
     if (!zonesListEl) return;
 
+    if (state.zones.length === 0) {
+      zonesListEl.innerHTML = `
+        <div class="empty-state-box" style="padding: 30px 15px; text-align: center;">
+          <img src="/images/finding.png" class="empty-state-mascot" style="width: 60px; height: 60px; margin-bottom: 10px;" alt="No Zones">
+          <h4 class="empty-state-title" style="font-size: 1rem; margin-bottom: 4px;">Chưa có phân vùng an ninh nào</h4>
+          <p class="empty-state-desc" style="font-size: 0.8rem; margin-bottom: 14px;">Tạo khu vực (Cổng chính, Phòng khách, Ban công...) để gắn camera và áp dụng kịch bản bảo vệ.</p>
+          <button class="btn btn-primary btn-sm" onclick="window.SmartGuardApp.openAddZoneModal()">
+            + Tạo Phân Vùng Đầu Tiên
+          </button>
+        </div>
+      `;
+      return;
+    }
+
     zonesListEl.innerHTML = state.zones.map(zone => {
+      const devCount = state.devices.filter(d => d.zoneId === zone.id).length;
       return `
-        <div class="card" style="padding: 18px; margin-bottom: 14px;">
+        <div class="card" style="padding: 16px; margin-bottom: 12px;">
           <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 8px;">
             <div>
               <h4 style="font-size: 1rem; font-weight: 700; color: var(--primary-navy);">${escapeHtml(zone.name)}</h4>
-              <p style="font-size: 0.8rem; color: var(--secondary-text);">${escapeHtml(zone.description || 'No description')}</p>
+              <p style="font-size: 0.8rem; color: var(--secondary-text);">${escapeHtml(zone.description || 'Chưa có mô tả vị trí')}</p>
             </div>
-            <span class="badge badge-info">${zone.deviceCount || 1} Camera</span>
+            <span class="badge badge-info">${devCount} Camera</span>
           </div>
-          <div style="display: flex; align-items: center; justify-content: space-between; padding-top: 10px; border-top: 1px solid var(--border-gray);">
+          <div style="display: flex; align-items: center; justify-content: space-between; padding-top: 10px; border-top: 1px solid var(--border-light, #e2e8f0);">
             <div style="display: flex; gap: 12px; font-size: 0.78rem; font-weight: 600; color: var(--security-blue);">
-              <span>🔔 Sound: ON</span>
-              <span>💬 Discord: ON</span>
+              <span>🔔 Còi: Bật</span>
+              <span>💬 Discord: Bật</span>
             </div>
             <div style="display: flex; gap: 6px;">
-              <button class="btn btn-outline btn-sm" onclick="window.SmartGuardApp.editZone('${zone.id}', '${escapeHtml(zone.name)}')">Edit</button>
-              <button class="btn btn-outline btn-sm" style="color: var(--danger-red);" onclick="window.SmartGuardApp.deleteZone('${zone.id}')">Delete</button>
+              <button class="btn btn-outline btn-sm" style="color: var(--danger-red); border-color: #fca5a5;" onclick="window.SmartGuardApp.deleteZone('${zone.id}')">Xóa</button>
             </div>
           </div>
         </div>
@@ -823,17 +887,21 @@ document.addEventListener('DOMContentLoaded', () => {
   // View 7: Storage Management
   function renderStorage() {
     const count = state.recordings.length;
-    const estMb = count * 3.8;
-    const usedGb = (estMb / 1024 + 1.2).toFixed(1);
-    const freeGb = (100 - usedGb).toFixed(1);
+    let totalMb = 0;
+    state.recordings.forEach(r => { totalMb += (r.sizeMb || 3.5); });
+
+    const usedGb = totalMb / 1024;
+    const freeGb = Math.max(0, 100 - usedGb).toFixed(1);
     const pct = Math.min(Math.round((usedGb / 100) * 100), 100);
 
     const usedEl = document.getElementById('storageUsedText');
     const freeEl = document.getElementById('storageFreeText');
     const barEl = document.getElementById('storageUsedBar');
 
-    if (usedEl) usedEl.textContent = `${usedGb} GB Used`;
-    if (freeEl) freeEl.textContent = `${freeGb} GB Free (100 GB Total)`;
+    const usedText = count === 0 ? '0 MB Đã dùng' : (totalMb > 1024 ? `${usedGb.toFixed(1)} GB Đã dùng` : `${totalMb.toFixed(1)} MB Đã dùng`);
+
+    if (usedEl) usedEl.textContent = usedText;
+    if (freeEl) freeEl.textContent = `${freeGb} GB Còn trống (100 GB Cloud)`;
     if (barEl) barEl.style.width = `${pct}%`;
   }
 
@@ -1508,6 +1576,83 @@ document.addEventListener('DOMContentLoaded', () => {
         }
       } catch (err) {
         showToast(err.message || 'Lỗi kích hoạt cảnh báo', 'danger');
+      }
+    },
+
+    openAddZoneModal() {
+      openModal(`
+        <div>
+          <div style="display: flex; align-items: center; gap: 12px; margin-bottom: 16px;">
+            <img src="/images/create_accout.png" style="width: 48px; height: 48px; object-fit: contain;" alt="Add Zone">
+            <div>
+              <h3 style="color: var(--primary-navy); margin-bottom: 2px;">Tạo Khu Vực / Phân Vùng Mới</h3>
+              <p style="font-size: 0.85rem; color: var(--secondary-text);">Thiết lập phân vùng an ninh để quản lý camera &amp; cảm biến</p>
+            </div>
+          </div>
+          <div class="form-group" style="margin-bottom: 14px;">
+            <label class="form-label">Tên Phân Vùng / Khu Vực</label>
+            <input type="text" id="newZoneName" class="form-input" placeholder="Ví dụ: Cổng chính, Sân sau, Phòng khách, Ban công...">
+          </div>
+          <div class="form-group" style="margin-bottom: 16px;">
+            <label class="form-label">Mô tả vị trí</label>
+            <input type="text" id="newZoneDesc" class="form-input" placeholder="Ví dụ: Lối ra vào mặt tiền, hàng rào phía sau...">
+          </div>
+          <div style="display: flex; gap: 10px;">
+            <button class="btn btn-outline" style="flex: 1;" onclick="window.SmartGuardApp.closeModal()">Hủy</button>
+            <button class="btn btn-primary" style="flex: 2;" onclick="window.SmartGuardApp.submitNewZone()">+ Tạo Khu Vực</button>
+          </div>
+        </div>
+      `);
+      setTimeout(() => {
+        const input = document.getElementById('newZoneName');
+        if (input) input.focus();
+      }, 150);
+    },
+
+    async submitNewZone() {
+      const name = document.getElementById('newZoneName')?.value?.trim();
+      const description = document.getElementById('newZoneDesc')?.value?.trim() || '';
+
+      if (!name) {
+        showToast('Vui lòng nhập tên khu vực / phân vùng.', 'warning');
+        return;
+      }
+
+      try {
+        let newZone = null;
+        if (SmartGuardApi.isAuthenticated()) {
+          newZone = await SmartGuardApi.createZone({ name, description });
+        } else {
+          newZone = {
+            id: 'zone-' + Date.now(),
+            name,
+            description,
+            deviceCount: 0
+          };
+        }
+
+        if (newZone) {
+          state.zones.push(newZone);
+        }
+        closeModal();
+        showToast(`Đã tạo khu vực an ninh [${name}] thành công!`, 'success');
+        renderZones();
+      } catch (err) {
+        showToast(err.message || 'Lỗi tạo khu vực.', 'danger');
+      }
+    },
+
+    async deleteZone(zoneId) {
+      if (!confirm('Bạn có chắc chắn muốn xóa khu vực an ninh này?')) return;
+      try {
+        if (SmartGuardApi.isAuthenticated()) {
+          await SmartGuardApi.deleteZone(zoneId);
+        }
+        state.zones = state.zones.filter(z => z.id !== zoneId);
+        showToast('Đã xóa khu vực thành công.', 'info');
+        renderZones();
+      } catch (err) {
+        showToast(err.message || 'Lỗi khi xóa khu vực.', 'danger');
       }
     },
 

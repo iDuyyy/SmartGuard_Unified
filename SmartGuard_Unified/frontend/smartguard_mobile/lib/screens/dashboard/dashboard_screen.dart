@@ -1,8 +1,13 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
+import 'package:intl/intl.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import 'package:battery_plus/battery_plus.dart';
 import '../../core/api_client.dart';
 import '../../core/app_config.dart';
 import '../../core/app_theme.dart';
 import '../../models/models.dart';
+import '../../services/sensor_fusion_service.dart';
 import '../alerts/alerts_history_screen.dart';
 
 class DashboardScreen extends StatefulWidget {
@@ -19,6 +24,10 @@ class DashboardScreenState extends State<DashboardScreen> {
   List<DeviceModel> _devices = [];
   List<AlertModel> _recentAlerts = [];
   int _alertCountToday = 0;
+  int _batteryLevel = 100;
+
+  final Battery _battery = Battery();
+  StreamSubscription<BatteryState>? _batterySubscription;
 
   void reloadDashboard() {
     _loadDashboardData();
@@ -27,11 +36,38 @@ class DashboardScreenState extends State<DashboardScreen> {
   @override
   void initState() {
     super.initState();
+    _initBatteryListener();
     _loadDashboardData();
+  }
+
+  @override
+  void dispose() {
+    _batterySubscription?.cancel();
+    super.dispose();
+  }
+
+  Future<void> _initBatteryListener() async {
+    try {
+      final level = await _battery.batteryLevel;
+      if (mounted) setState(() => _batteryLevel = level);
+    } catch (_) {}
+
+    _batterySubscription = _battery.onBatteryStateChanged.listen((_) async {
+      try {
+        final level = await _battery.batteryLevel;
+        if (mounted) setState(() => _batteryLevel = level);
+      } catch (_) {}
+    });
   }
 
   Future<void> _loadDashboardData() async {
     setState(() => _isLoading = true);
+    
+    try {
+      final level = await _battery.batteryLevel;
+      _batteryLevel = level;
+    } catch (_) {}
+
     final isOnline = await ApiClient.testConnection();
 
     if (!isOnline) {
@@ -57,7 +93,7 @@ class DashboardScreenState extends State<DashboardScreen> {
           _devices = devs;
           _recentAlerts = alts;
           _alertCountToday = alts.length;
-          _isSystemArmed = devs.any((d) => d.isArmed);
+          _isSystemArmed = devs.isEmpty ? true : devs.any((d) => d.isArmed);
           _isLoading = false;
         });
       }
@@ -75,16 +111,178 @@ class DashboardScreenState extends State<DashboardScreen> {
     final newState = !_isSystemArmed;
     setState(() => _isSystemArmed = newState);
 
-    for (var d in _devices) {
-      try {
-        await ApiClient.request('PATCH', '/api/devices/${d.id}/toggle-arm');
-      } catch (_) {}
+    if (!newState) {
+      await AlertOrchestrator.stopAllAlarms();
     }
 
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(newState ? 'Đã bật chế độ bảo vệ an ninh! 🛡️' : 'Đã tắt chế độ bảo vệ.'),
-        backgroundColor: newState ? AppTheme.statusArmed : AppTheme.statusWarning,
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool('sg_guard_monitoring_enabled', newState);
+    await prefs.setBool('sg_motion_active', newState);
+
+    for (var d in _devices) {
+      if (d.isArmed != newState) {
+        try {
+          await ApiClient.request('PATCH', '/api/devices/${d.id}/toggle-arm');
+        } catch (_) {}
+      }
+    }
+
+    await _loadDashboardData();
+
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            newState
+                ? 'Đã BẬT chế độ bảo vệ an ninh & cảm biến! 🛡️'
+                : 'Đã TẮT toàn bộ cảnh báo, còi hú và cảm biến.',
+          ),
+          backgroundColor: newState ? AppTheme.statusArmed : AppTheme.statusWarning,
+        ),
+      );
+    }
+  }
+
+  String _formatReason(String code) {
+    final upper = code.toUpperCase();
+    if (upper.contains('NGUOI') || upper.contains('PERSON')) return 'Phát hiện người trước camera';
+    if (upper.contains('CHUYEN_DONG') || upper.contains('MOTION')) return 'Phát hiện chuyển động';
+    if (upper.contains('TIENG_DONG') || upper.contains('NOISE') || upper.contains('SOUND')) return 'Phát hiện âm thanh lớn';
+    if (upper.contains('RUNG_LAC') || upper.contains('SHAKE')) return 'Phát hiện rung lắc thiết bị';
+    return code;
+  }
+
+  String _formatAlertTime(DateTime dt) {
+    final local = dt.toLocal();
+    return DateFormat('HH:mm • dd/MM/yyyy').format(local);
+  }
+
+  void _showAlertDetailModal(AlertModel alert) {
+    final hasNetworkImage = alert.imageUrl != null &&
+        alert.imageUrl!.isNotEmpty &&
+        (alert.imageUrl!.startsWith('http') || alert.imageUrl!.startsWith('/'));
+    final fullImageUrl = hasNetworkImage
+        ? (alert.imageUrl!.startsWith('http')
+            ? alert.imageUrl!
+            : '${AppConfig.baseUrl}${alert.imageUrl}')
+        : null;
+
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: AppTheme.cardWhite,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+        title: Row(
+          children: [
+            const Icon(Icons.warning_amber_rounded, color: AppTheme.statusAlarm),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                _formatReason(alert.triggerReason),
+                style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+              ),
+            ),
+          ],
+        ),
+        content: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              ClipRRect(
+                borderRadius: BorderRadius.circular(16),
+                child: fullImageUrl != null
+                    ? Image.network(
+                        fullImageUrl,
+                        height: 220,
+                        width: double.infinity,
+                        fit: BoxFit.cover,
+                        errorBuilder: (_, __, ___) => Container(
+                          height: 160,
+                          width: double.infinity,
+                          color: AppTheme.creamBg,
+                          alignment: Alignment.center,
+                          child: Column(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Image.asset('assets/images/alter.png', height: 72),
+                              const SizedBox(height: 8),
+                              const Text(
+                                'Ảnh chụp không khả dụng trên máy chủ Cloud',
+                                style: TextStyle(fontSize: 12, color: AppTheme.secondaryText),
+                              ),
+                            ],
+                          ),
+                        ),
+                      )
+                    : Container(
+                        height: 150,
+                        width: double.infinity,
+                        color: AppTheme.creamBg,
+                        alignment: Alignment.center,
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Image.asset('assets/images/alter.png', height: 70),
+                            const SizedBox(height: 6),
+                            const Text(
+                              'Cảnh báo từ cảm biến (không kèm ảnh chụp)',
+                              style: TextStyle(fontSize: 12, color: AppTheme.secondaryText),
+                            ),
+                          ],
+                        ),
+                      ),
+              ),
+              const SizedBox(height: 14),
+              Text('📷 Thiết bị: ${alert.deviceName}', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
+              const SizedBox(height: 4),
+              Text('🕒 Thời gian: ${_formatAlertTime(alert.triggeredAt)}', style: const TextStyle(fontSize: 13, color: AppTheme.secondaryText)),
+              const SizedBox(height: 4),
+              Text('⚡ Mức độ: ${alert.severity} • Trạng thái: ${alert.status}', style: const TextStyle(fontSize: 13, color: AppTheme.secondaryText)),
+              if (alert.adaptiveReason != null && alert.adaptiveReason!.isNotEmpty) ...[
+                const SizedBox(height: 6),
+                Text('🛡️ Phân tích AI: ${alert.adaptiveReason}', style: const TextStyle(fontSize: 12, color: AppTheme.royalPurple)),
+              ],
+            ],
+          ),
+        ),
+        actions: [
+          TextButton.icon(
+            onPressed: () async {
+              Navigator.pop(ctx);
+              await AlertOrchestrator.stopAllAlarms();
+              try {
+                await ApiClient.request('POST', '/api/alerts/${alert.id}/action', body: {'action': 'mute'});
+                await _loadDashboardData();
+              } catch (_) {}
+              if (mounted) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(content: Text('🔕 Đã tắt còi cảnh báo và tạm dừng 3 phút.'), backgroundColor: AppTheme.statusArmed),
+                );
+              }
+            },
+            icon: const Icon(Icons.volume_off, size: 18, color: AppTheme.statusWarning),
+            label: const Text('Tắt còi', style: TextStyle(color: AppTheme.statusWarning, fontWeight: FontWeight.bold)),
+          ),
+          ElevatedButton.icon(
+            style: ElevatedButton.styleFrom(backgroundColor: AppTheme.statusArmed, foregroundColor: Colors.white),
+            onPressed: () async {
+              Navigator.pop(ctx);
+              await AlertOrchestrator.stopAllAlarms();
+              try {
+                await ApiClient.request('POST', '/api/alerts/${alert.id}/action', body: {'action': 'known'});
+                await _loadDashboardData();
+              } catch (_) {}
+              if (mounted) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(content: Text('✅ Đã xác nhận Người quen và tắt cảnh báo.'), backgroundColor: AppTheme.statusArmed),
+                );
+              }
+            },
+            icon: const Icon(Icons.verified_user, size: 18),
+            label: const Text('Người quen'),
+          ),
+        ],
       ),
     );
   }
@@ -144,11 +342,14 @@ class DashboardScreenState extends State<DashboardScreen> {
                 child: ElevatedButton(
                   onPressed: () async {
                     Navigator.pop(ctx);
+                    await AlertOrchestrator.stopAllAlarms();
                     try {
                       await ApiClient.request('POST', '/api/adaptive/snooze', body: {'minutes': selectedMinutes});
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        SnackBar(content: Text('Đã tạm dừng cảnh báo trong $selectedMinutes phút.'), backgroundColor: AppTheme.statusArmed),
-                      );
+                      if (mounted) {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          SnackBar(content: Text('Đã tạm dừng cảnh báo trong $selectedMinutes phút.'), backgroundColor: AppTheme.statusArmed),
+                        );
+                      }
                     } catch (_) {}
                   },
                   style: ElevatedButton.styleFrom(
@@ -172,7 +373,7 @@ class DashboardScreenState extends State<DashboardScreen> {
     return Scaffold(
       backgroundColor: AppTheme.creamBg,
       appBar: AppBar(
-        title: Row(
+        title: const Row(
           mainAxisSize: MainAxisSize.min,
           children: [
             Text('Smart', style: TextStyle(fontSize: 22, fontWeight: FontWeight.w900, color: AppTheme.coralPink)),
@@ -180,6 +381,21 @@ class DashboardScreenState extends State<DashboardScreen> {
           ],
         ),
         actions: [
+          IconButton(
+            tooltip: 'Tắt nhanh còi báo động',
+            icon: const Icon(Icons.volume_off_rounded, color: AppTheme.statusAlarm, size: 24),
+            onPressed: () async {
+              await AlertOrchestrator.stopAllAlarms();
+              if (mounted) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(
+                    content: Text('🔕 Đã tắt ngay còi báo động và rung trên điện thoại!'),
+                    backgroundColor: AppTheme.statusArmed,
+                  ),
+                );
+              }
+            },
+          ),
           Stack(
             children: [
               IconButton(
@@ -187,7 +403,7 @@ class DashboardScreenState extends State<DashboardScreen> {
                 onPressed: () {
                   Navigator.of(context).push(
                     MaterialPageRoute(builder: (_) => const AlertsHistoryScreen()),
-                  );
+                  ).then((_) => _loadDashboardData());
                 },
               ),
               if (_alertCountToday > 0)
@@ -219,9 +435,7 @@ class DashboardScreenState extends State<DashboardScreen> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
-                    // ==========================================
-                    // 1. HERO SHIELD CARD (Matching Design Image)
-                    // ==========================================
+                    // 1. HERO SHIELD CARD
                     Container(
                       padding: const EdgeInsets.all(20),
                       decoration: BoxDecoration(
@@ -269,13 +483,12 @@ class DashboardScreenState extends State<DashboardScreen> {
                                     ),
                                     const SizedBox(height: 2),
                                     Text(
-                                      _isSystemArmed ? 'Hệ thống hoạt động bình thường' : 'Hệ thống đang ở chế độ chờ',
+                                      _isSystemArmed ? 'Hệ thống hoạt động bình thường' : 'Đã tắt cảnh báo & cảm biến',
                                       style: const TextStyle(fontSize: 12, color: AppTheme.secondaryText),
                                     ),
                                   ],
                                 ),
                               ),
-                              // Mascot image
                               Image.asset(
                                 'assets/images/3bc65821-0388-43aa-aba6-16fc6a3912a4.png',
                                 width: 72,
@@ -311,7 +524,7 @@ class DashboardScreenState extends State<DashboardScreen> {
                                   ),
                                   const SizedBox(width: 8),
                                   Text(
-                                    _isSystemArmed ? 'TẮT BẢO VỆ' : 'BẬT BẢO VỆ',
+                                    _isSystemArmed ? 'TẮT BẢO VỆ & CẢM BIẾN' : 'BẬT BẢO VỆ & CẢM BIẾN',
                                     style: TextStyle(
                                       fontWeight: FontWeight.w800,
                                       fontSize: 14,
@@ -328,17 +541,15 @@ class DashboardScreenState extends State<DashboardScreen> {
                     ),
                     const SizedBox(height: 18),
 
-                    // ==========================================
-                    // 2. 4 QUICK STATUS METRIC CARDS (2x2 Grid)
-                    // ==========================================
+                    // 2. 4 QUICK STATUS METRIC CARDS
                     Row(
                       children: [
                         Expanded(
                           child: _buildMetricTile(
                             icon: Icons.videocam_outlined,
-                            iconColor: AppTheme.statusArmed,
+                            iconColor: _isSystemArmed ? AppTheme.statusArmed : AppTheme.statusWarning,
                             title: 'Camera',
-                            subtitle: _devices.isEmpty ? 'Chưa kết nối' : 'Hoạt động',
+                            subtitle: _isSystemArmed ? 'Đang bảo vệ' : 'Đang tạm tắt',
                           ),
                         ),
                         const SizedBox(width: 12),
@@ -357,10 +568,14 @@ class DashboardScreenState extends State<DashboardScreen> {
                       children: [
                         Expanded(
                           child: _buildMetricTile(
-                            icon: Icons.battery_charging_full_rounded,
-                            iconColor: AppTheme.statusArmed,
+                            icon: _batteryLevel <= 20
+                                ? Icons.battery_alert_rounded
+                                : Icons.battery_charging_full_rounded,
+                            iconColor: _batteryLevel <= 20
+                                ? AppTheme.statusAlarm
+                                : AppTheme.statusArmed,
                             title: 'Pin',
-                            subtitle: '87%',
+                            subtitle: '$_batteryLevel%',
                           ),
                         ),
                         const SizedBox(width: 12),
@@ -376,21 +591,19 @@ class DashboardScreenState extends State<DashboardScreen> {
                     ),
                     const SizedBox(height: 24),
 
-                    // ==========================================
                     // 3. SỰ KIỆN GẦN ĐÂY
-                    // ==========================================
                     Row(
                       mainAxisAlignment: MainAxisAlignment.spaceBetween,
                       children: [
                         const Text(
-                          'Sự kiện gần đây',
-                          style: TextStyle(fontSize: 16, fontWeight: FontWeight.w800, color: AppTheme.headingDark),
+                          'Sự kiện gần đây (Chạm để xem ảnh)',
+                          style: TextStyle(fontSize: 15, fontWeight: FontWeight.w800, color: AppTheme.headingDark),
                         ),
                         GestureDetector(
                           onTap: () {
                             Navigator.of(context).push(
                               MaterialPageRoute(builder: (_) => const AlertsHistoryScreen()),
-                            );
+                            ).then((_) => _loadDashboardData());
                           },
                           child: const Text(
                             'Xem tất cả >',
@@ -401,36 +614,43 @@ class DashboardScreenState extends State<DashboardScreen> {
                     ),
                     const SizedBox(height: 12),
 
-                    if (_recentAlerts.isEmpty) ...[
-                      _buildEventCard(
-                        title: 'Phát hiện người lạ',
-                        timeLocation: '10:24 • Camera cửa chính',
-                        imageAsset: 'assets/images/sticker_system(6).png',
-                        badgeColor: AppTheme.statusAlarm,
-                      ),
-                      const SizedBox(height: 10),
-                      _buildEventCard(
-                        title: 'Phát hiện chuyển động',
-                        timeLocation: '09:58 • Sân trước',
-                        imageAsset: 'assets/images/alter.png',
-                        badgeColor: AppTheme.statusWarning,
-                      ),
-                    ] else ...[
-                      ..._recentAlerts.take(3).map((a) => Padding(
-                        padding: const EdgeInsets.only(bottom: 10),
-                        child: _buildEventCard(
-                          title: a.triggerReason,
-                          timeLocation: '${a.deviceName} • ${a.severity}',
-                          imageAsset: a.imageUrl ?? 'assets/images/alter.png',
-                          badgeColor: a.severity == 'Critical' || a.severity == 'Danger' ? AppTheme.statusAlarm : AppTheme.statusWarning,
+                    if (_recentAlerts.isEmpty)
+                      Container(
+                        padding: const EdgeInsets.all(20),
+                        decoration: BoxDecoration(
+                          color: AppTheme.cardWhite,
+                          borderRadius: BorderRadius.circular(18),
+                          border: Border.all(color: AppTheme.borderWarm),
                         ),
-                      )),
-                    ],
+                        child: const Row(
+                          children: [
+                            Icon(Icons.verified_user_outlined, color: AppTheme.statusArmed, size: 28),
+                            SizedBox(width: 12),
+                            Expanded(
+                              child: Text(
+                                'Chưa có cảnh báo nào gần đây. Khu vực của bạn đang an toàn!',
+                                style: TextStyle(fontSize: 13, color: AppTheme.secondaryText),
+                              ),
+                            ),
+                          ],
+                        ),
+                      )
+                    else
+                      ..._recentAlerts.take(4).map((a) => Padding(
+                            padding: const EdgeInsets.only(bottom: 10),
+                            child: _buildEventCard(
+                              title: _formatReason(a.triggerReason),
+                              timeLocation: '${_formatAlertTime(a.triggeredAt)} • ${a.deviceName}',
+                              imageAsset: a.imageUrl ?? 'assets/images/alter.png',
+                              badgeColor: a.severity == 'Critical' || a.severity == 'Danger'
+                                  ? AppTheme.statusAlarm
+                                  : AppTheme.statusWarning,
+                              onTap: () => _showAlertDetailModal(a),
+                            ),
+                          )),
                     const SizedBox(height: 20),
 
-                    // ==========================================
                     // 4. CHỨC NĂNG NHANH & 6 TRẠNG THÁI
-                    // ==========================================
                     Row(
                       mainAxisAlignment: MainAxisAlignment.spaceBetween,
                       children: [
@@ -447,7 +667,6 @@ class DashboardScreenState extends State<DashboardScreen> {
                     ),
                     const SizedBox(height: 8),
 
-                    // Horizontal States Carousel (Matching "6 TRẠNG THÁI BẢO VỆ" in image)
                     SizedBox(
                       height: 110,
                       child: ListView(
@@ -538,44 +757,50 @@ class DashboardScreenState extends State<DashboardScreen> {
     required String timeLocation,
     required String imageAsset,
     required Color badgeColor,
+    VoidCallback? onTap,
   }) {
-    return Container(
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: AppTheme.cardWhite,
-        borderRadius: BorderRadius.circular(18),
-        border: Border.all(color: AppTheme.borderWarm),
-      ),
-      child: Row(
-        children: [
-          ClipRRect(
-            borderRadius: BorderRadius.circular(12),
-            child: Container(
-              width: 52,
-              height: 52,
-              color: AppTheme.creamBg,
-              child: imageAsset.startsWith('http') || imageAsset.startsWith('/evidence')
-                  ? Image.network(
-                      imageAsset.startsWith('http') ? imageAsset : '${AppConfig.baseUrl}$imageAsset',
-                      fit: BoxFit.cover,
-                      errorBuilder: (_, __, ___) => Image.asset('assets/images/alter.png', fit: BoxFit.cover),
-                    )
-                  : Image.asset(imageAsset, fit: BoxFit.cover),
+    final isNetwork = imageAsset.startsWith('http') || imageAsset.startsWith('/');
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(18),
+      child: Container(
+        padding: const EdgeInsets.all(12),
+        decoration: BoxDecoration(
+          color: AppTheme.cardWhite,
+          borderRadius: BorderRadius.circular(18),
+          border: Border.all(color: AppTheme.borderWarm),
+        ),
+        child: Row(
+          children: [
+            ClipRRect(
+              borderRadius: BorderRadius.circular(12),
+              child: Container(
+                width: 52,
+                height: 52,
+                color: AppTheme.creamBg,
+                child: isNetwork
+                    ? Image.network(
+                        imageAsset.startsWith('http') ? imageAsset : '${AppConfig.baseUrl}$imageAsset',
+                        fit: BoxFit.cover,
+                        errorBuilder: (_, __, ___) => Image.asset('assets/images/alter.png', fit: BoxFit.cover),
+                      )
+                    : Image.asset(imageAsset, fit: BoxFit.cover),
+              ),
             ),
-          ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(title, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14, color: AppTheme.headingDark)),
-                const SizedBox(height: 4),
-                Text(timeLocation, style: const TextStyle(fontSize: 12, color: AppTheme.secondaryText)),
-              ],
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(title, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14, color: AppTheme.headingDark)),
+                  const SizedBox(height: 4),
+                  Text(timeLocation, style: const TextStyle(fontSize: 12, color: AppTheme.secondaryText)),
+                ],
+              ),
             ),
-          ),
-          const Icon(Icons.chevron_right_rounded, color: AppTheme.secondaryText),
-        ],
+            const Icon(Icons.visibility_outlined, color: AppTheme.royalPurple, size: 20),
+          ],
+        ),
       ),
     );
   }

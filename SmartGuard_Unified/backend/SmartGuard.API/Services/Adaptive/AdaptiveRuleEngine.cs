@@ -85,6 +85,23 @@ namespace SmartGuard.API.Services.Adaptive
 
             var zoneName = device.Zone?.Name ?? matchedRule?.Zone?.Name ?? "Khu vực chung";
 
+            var isStrangerThreat = triggerReason.Contains("NGUOI_LA", StringComparison.OrdinalIgnoreCase)
+                                   || triggerReason.Contains("STRANGER", StringComparison.OrdinalIgnoreCase)
+                                   || severity.Equals("Critical", StringComparison.OrdinalIgnoreCase);
+
+            // Nếu là người lạ hoặc mối nguy an ninh nghiêm trọng: LUÔN KÍCH HOẠT báo động, còi hú và bắn Discord
+            if (isStrangerThreat)
+            {
+                var strangerExplanation = $"🚨 [BẢO VỆ KHẨN CẤP] Phát hiện người lạ / mối nguy an ninh nghiêm trọng tại [{zoneName}]. Hệ thống ưu tiên phát động báo động toàn diện và gửi thông báo Discord.";
+                return new AdaptiveEvaluationResult(
+                    ShouldTriggerAlert: true,
+                    EnableAlarmSound: true,
+                    EnableDiscordNotification: true,
+                    ReasonExplanation: strangerExplanation,
+                    SuppressionReason: null
+                );
+            }
+
             // Nếu phân vùng này bị tắt giám sát trong chế độ hiện tại (Ví dụ: Phòng khách trong Chế độ Ở nhà)
             if (matchedRule != null && !matchedRule.EnableMonitoring)
             {
@@ -100,19 +117,33 @@ namespace SmartGuard.API.Services.Adaptive
                 );
             }
 
-            // Tính toán độ nhạy thích ứng (Sensitivity Multiplier)
-            var sensitivity = matchedRule?.CustomSensitivity ?? 1.0;
-            var enableSound = matchedRule?.EnableAlarmSound ?? true;
+            // Nếu người dùng chưa cấu hình ZoneRule cụ thể nhưng tên Zone là khu vực sinh hoạt và đang ở chế độ Home
+            if (matchedRule == null && activeProfile.ModeName.Equals("Home", StringComparison.OrdinalIgnoreCase) && !string.IsNullOrEmpty(device.Zone?.Name))
+            {
+                var lowerZone = device.Zone.Name.ToLowerInvariant();
+                if (lowerZone.Contains("khách") || lowerZone.Contains("bếp") || lowerZone.Contains("ngủ"))
+                {
+                    var suppression = $"Chế độ [{activeProfile.DisplayName}] tự động giảm cảnh báo tại khu vực sinh hoạt [{zoneName}].";
+                    return new AdaptiveEvaluationResult(
+                        ShouldTriggerAlert: false,
+                        EnableAlarmSound: false,
+                        EnableDiscordNotification: false,
+                        ReasonExplanation: suppression,
+                        SuppressionReason: suppression
+                    );
+                }
+            }
+
+            // 4. Cho phép kích hoạt cảnh báo kèm diễn giải nguồn gốc (Explainable Alert)
+            var enableAlarm = matchedRule?.EnableAlarmSound ?? true;
             var enableDiscord = matchedRule?.EnableDiscordNotification ?? true;
+            var sensitivity = matchedRule?.CustomSensitivity ?? 1.0;
 
-            // Diễn giải lý do phát sinh cảnh báo (Explainable Rule Trigger)
-            var explanation = $"Kích hoạt bởi Chế độ [{activeProfile.DisplayName}] tại khu vực [{zoneName}] (Độ nhạy x{sensitivity:0.0}, Lý do: {triggerReason}).";
-
-            _logger.LogInformation("✅ [ADAPTIVE TRIGGER] {Explanation}", explanation);
+            var explanation = $"Kích hoạt bởi Chế độ [{activeProfile.DisplayName}] tại khu vực [{zoneName}] (Độ nhạy x{sensitivity:0.0}).";
 
             return new AdaptiveEvaluationResult(
                 ShouldTriggerAlert: true,
-                EnableAlarmSound: enableSound,
+                EnableAlarmSound: enableAlarm,
                 EnableDiscordNotification: enableDiscord,
                 ReasonExplanation: explanation,
                 SuppressionReason: null
@@ -121,90 +152,140 @@ namespace SmartGuard.API.Services.Adaptive
 
         public async Task InitializeDefaultProfilesForUserAsync(Guid userId)
         {
-            var existing = await _db.AdaptiveProfiles.AnyAsync(p => p.UserId == userId);
-            if (existing) return;
+            if (userId == Guid.Empty) return;
+
+            var existingProfiles = await _db.AdaptiveProfiles
+                .Include(p => p.ZoneRules)
+                .Where(p => p.UserId == userId)
+                .ToListAsync();
 
             var userZones = await _db.Zones.Where(z => z.OwnerId == userId).ToListAsync();
 
-            // 1. Chế độ Ở nhà (Home)
-            var homeProfile = new AdaptiveProfile
+            if (existingProfiles.Count == 0)
             {
-                UserId = userId,
-                ModeName = "Home",
-                DisplayName = "Ở nhà",
-                Description = "Giảm cảnh báo tại các khu vực sinh hoạt trong nhà, tập trung bảo vệ lối vào/sân ngoài.",
-                IsActive = true,
-                BehaviorOnDisconnect = "AlertOffline",
-                ZoneRules = new List<AdaptiveZoneRule>()
-            };
-
-            // 2. Chế độ Rời nhà (Away)
-            var awayProfile = new AdaptiveProfile
-            {
-                UserId = userId,
-                ModeName = "Away",
-                DisplayName = "Rời nhà",
-                Description = "Tăng cường giám sát tối đa trên tất cả các khu vực, gửi thông báo khẩn cấp ngay lập tức.",
-                IsActive = false,
-                BehaviorOnDisconnect = "FailSecure",
-                ZoneRules = new List<AdaptiveZoneRule>()
-            };
-
-            // 3. Chế độ Ban đêm (Night)
-            var nightProfile = new AdaptiveProfile
-            {
-                UserId = userId,
-                ModeName = "Night",
-                DisplayName = "Ban đêm",
-                Description = "Điều chỉnh vùng giám sát ban đêm với độ nhạy cao (x1.5), kích hoạt còi tại chỗ lập tức.",
-                IsActive = false,
-                ActiveFrom = "22:00",
-                ActiveTo = "06:00",
-                BehaviorOnDisconnect = "FailSecure",
-                ZoneRules = new List<AdaptiveZoneRule>()
-            };
-
-            // Thiết lập quy tắc cho các khu vực nếu có
-            foreach (var zone in userZones)
-            {
-                var lowerName = zone.Name.ToLowerInvariant();
-                var isLivingArea = lowerName.Contains("khách") || lowerName.Contains("bếp") || lowerName.Contains("ngủ") || lowerName.Contains("phòng");
-
-                // Home: tắt khu sinh hoạt, mở khu ngoài
-                homeProfile.ZoneRules.Add(new AdaptiveZoneRule
+                // 1. Chế độ Ở nhà (Home)
+                var homeProfile = new AdaptiveProfile
                 {
+                    UserId = userId,
+                    ModeName = "Home",
+                    DisplayName = "Ở nhà",
+                    Description = "Giảm cảnh báo tại các khu vực sinh hoạt trong nhà, tập trung bảo vệ lối vào/sân ngoài.",
+                    IsActive = true,
+                    BehaviorOnDisconnect = "AlertOffline",
+                    ZoneRules = new List<AdaptiveZoneRule>()
+                };
+
+                // 2. Chế độ Rời nhà (Away)
+                var awayProfile = new AdaptiveProfile
+                {
+                    UserId = userId,
+                    ModeName = "Away",
+                    DisplayName = "Rời nhà",
+                    Description = "Tăng cường giám sát tối đa trên tất cả các khu vực, gửi thông báo khẩn cấp ngay lập tức.",
+                    IsActive = false,
+                    BehaviorOnDisconnect = "FailSecure",
+                    ZoneRules = new List<AdaptiveZoneRule>()
+                };
+
+                // 3. Chế độ Ban đêm (Night)
+                var nightProfile = new AdaptiveProfile
+                {
+                    UserId = userId,
+                    ModeName = "Night",
+                    DisplayName = "Ban đêm",
+                    Description = "Điều chỉnh vùng giám sát ban đêm với độ nhạy cao (x1.5), kích hoạt còi tại chỗ lập tức.",
+                    IsActive = false,
+                    ActiveFrom = "22:00",
+                    ActiveTo = "06:00",
+                    BehaviorOnDisconnect = "FailSecure",
+                    ZoneRules = new List<AdaptiveZoneRule>()
+                };
+
+                foreach (var zone in userZones)
+                {
+                    AddZoneRuleForProfile(homeProfile, zone);
+                    AddZoneRuleForProfile(awayProfile, zone);
+                    AddZoneRuleForProfile(nightProfile, zone);
+                }
+
+                _db.AdaptiveProfiles.AddRange(homeProfile, awayProfile, nightProfile);
+                await _db.SaveChangesAsync();
+                return;
+            }
+
+            // Nếu đã có hồ sơ nhưng người dùng vừa tạo thêm Zone mới -> tự động bổ sung quy tắc cho các Zone còn thiếu
+            bool changed = false;
+            if (!existingProfiles.Any(p => p.IsActive))
+            {
+                var first = existingProfiles.FirstOrDefault(p => p.ModeName == "Home") ?? existingProfiles.First();
+                first.IsActive = true;
+                changed = true;
+            }
+
+            foreach (var profile in existingProfiles)
+            {
+                profile.ZoneRules ??= new List<AdaptiveZoneRule>();
+                foreach (var zone in userZones)
+                {
+                    if (!profile.ZoneRules.Any(r => r.ZoneId == zone.Id))
+                    {
+                        var newRule = CreateZoneRuleForProfile(profile, zone);
+                        _db.AdaptiveZoneRules.Add(newRule);
+                        changed = true;
+                    }
+                }
+            }
+
+            if (changed)
+            {
+                await _db.SaveChangesAsync();
+            }
+        }
+
+        private static void AddZoneRuleForProfile(AdaptiveProfile profile, Zone zone)
+        {
+            profile.ZoneRules ??= new List<AdaptiveZoneRule>();
+            profile.ZoneRules.Add(CreateZoneRuleForProfile(profile, zone));
+        }
+
+        private static AdaptiveZoneRule CreateZoneRuleForProfile(AdaptiveProfile profile, Zone zone)
+        {
+            var lowerName = zone.Name.ToLowerInvariant();
+            var isLivingArea = lowerName.Contains("khách") || lowerName.Contains("bếp") || lowerName.Contains("ngủ") || lowerName.Contains("phòng");
+
+            if (profile.ModeName.Equals("Home", StringComparison.OrdinalIgnoreCase))
+            {
+                return new AdaptiveZoneRule
+                {
+                    ProfileId = profile.Id,
                     ZoneId = zone.Id,
                     EnableMonitoring = !isLivingArea,
                     EnableAlarmSound = false,
                     EnableDiscordNotification = true,
                     CustomSensitivity = 0.8
-                });
-
-                // Away: bật mọi khu vực, độ nhạy cao
-                awayProfile.ZoneRules.Add(new AdaptiveZoneRule
+                };
+            }
+            if (profile.ModeName.Equals("Away", StringComparison.OrdinalIgnoreCase))
+            {
+                return new AdaptiveZoneRule
                 {
+                    ProfileId = profile.Id,
                     ZoneId = zone.Id,
                     EnableMonitoring = true,
                     EnableAlarmSound = true,
                     EnableDiscordNotification = true,
                     CustomSensitivity = 1.2
-                });
-
-                // Night: bật mọi khu vực, độ nhạy tối đa, còi hú to
-                nightProfile.ZoneRules.Add(new AdaptiveZoneRule
-                {
-                    ZoneId = zone.Id,
-                    EnableMonitoring = true,
-                    EnableAlarmSound = true,
-                    EnableDiscordNotification = true,
-                    CustomSensitivity = 1.5
-                });
+                };
             }
-
-            _db.AdaptiveProfiles.AddRange(homeProfile, awayProfile, nightProfile);
-            await _db.SaveChangesAsync();
-
-            _logger.LogInformation("✅ Đã khởi tạo 3 chế độ an ninh thích ứng mẫu (Ở nhà, Rời nhà, Ban đêm) cho User {UserId}", userId);
+            return new AdaptiveZoneRule
+            {
+                ProfileId = profile.Id,
+                ZoneId = zone.Id,
+                EnableMonitoring = true,
+                EnableAlarmSound = true,
+                EnableDiscordNotification = true,
+                CustomSensitivity = 1.5
+            };
         }
     }
 }

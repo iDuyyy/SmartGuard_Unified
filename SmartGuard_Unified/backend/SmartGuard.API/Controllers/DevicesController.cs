@@ -1,4 +1,5 @@
 using System.Security.Claims;
+using System.Text.Json;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
@@ -22,15 +23,20 @@ namespace SmartGuard.API.Controllers
             _logger = logger;
         }
 
-        private Guid CurrentUserId => Guid.Parse(User.FindFirstValue(ClaimTypes.NameIdentifier)!);
+        private Guid CurrentUserId =>
+            Guid.TryParse(User.FindFirstValue(ClaimTypes.NameIdentifier) ?? User.FindFirstValue("sub"), out var id)
+                ? id
+                : Guid.Empty;
+
         private bool IsAdmin => User.IsInRole("Admin");
 
         [HttpGet]
         public async Task<IActionResult> GetDevices()
         {
             var userId = CurrentUserId;
+            if (userId == Guid.Empty && !IsAdmin) return Unauthorized();
 
-            // Lấy danh sách thiết bị sở hữu hoặc được chia sẻ quyền
+            // 1. Lấy danh sách thiết bị sở hữu trực tiếp (hoặc toàn bộ nếu là Admin)
             var ownedDevices = await _db.Devices
                 .Include(d => d.Zone)
                 .Where(d => IsAdmin || d.OwnerId == userId)
@@ -50,17 +56,32 @@ namespace SmartGuard.API.Controllers
                 ))
                 .ToListAsync();
 
-            // Cộng thêm các thiết bị được chia sẻ
-            var sharedDeviceIds = await _db.MemberAccesses
+            if (IsAdmin) return Ok(ownedDevices);
+
+            // 2. Lấy thêm các thiết bị được chia sẻ qua MemberAccesses (cả chia sẻ theo DeviceId cụ thể lẫn toàn bộ thiết bị của Owner khi DeviceId == null)
+            var memberAccesses = await _db.MemberAccesses
                 .Where(m => m.MemberUserId == userId)
-                .Select(m => m.DeviceId)
+                .Select(m => new { m.OwnerId, m.DeviceId })
                 .ToListAsync();
 
-            if (sharedDeviceIds.Any())
+            if (memberAccesses.Count > 0)
             {
+                var ownedIds = ownedDevices.Select(o => o.Id).ToList();
+                var fullAccessOwnerIds = memberAccesses
+                    .Where(m => m.DeviceId == null)
+                    .Select(m => m.OwnerId)
+                    .Distinct()
+                    .ToList();
+                var specificDeviceIds = memberAccesses
+                    .Where(m => m.DeviceId.HasValue)
+                    .Select(m => m.DeviceId!.Value)
+                    .Distinct()
+                    .ToList();
+
                 var sharedDevices = await _db.Devices
                     .Include(d => d.Zone)
-                    .Where(d => sharedDeviceIds.Contains(d.Id) && !ownedDevices.Select(o => o.Id).Contains(d.Id))
+                    .Where(d => !ownedIds.Contains(d.Id) &&
+                                (specificDeviceIds.Contains(d.Id) || fullAccessOwnerIds.Contains(d.OwnerId)))
                     .Select(d => new DeviceResponseDto(
                         d.Id,
                         d.OwnerId,
@@ -80,16 +101,50 @@ namespace SmartGuard.API.Controllers
                 ownedDevices.AddRange(sharedDevices);
             }
 
+            // 3. Nếu người dùng mới đăng ký chưa có thiết bị nào, tự động khởi tạo 1 thiết bị Camera mặc định
+            if (ownedDevices.Count == 0 && userId != Guid.Empty)
+            {
+                var defaultDevice = new GuardDevice
+                {
+                    OwnerId = userId,
+                    Name = "Camera Điện Thoại SmartGuard",
+                    Description = "Loại: camera | Vị trí: Cửa chính",
+                    IsArmed = true,
+                    NoiseThreshold = 70.0,
+                    MotionThreshold = 3.5,
+                    RegisteredAt = DateTime.UtcNow,
+                    LastSeenAt = DateTime.UtcNow
+                };
+                _db.Devices.Add(defaultDevice);
+                await _db.SaveChangesAsync();
+
+                ownedDevices.Add(new DeviceResponseDto(
+                    defaultDevice.Id,
+                    defaultDevice.OwnerId,
+                    defaultDevice.ZoneId,
+                    null,
+                    defaultDevice.Name,
+                    defaultDevice.DeviceCode,
+                    defaultDevice.Description,
+                    defaultDevice.IsArmed,
+                    defaultDevice.NoiseThreshold,
+                    defaultDevice.MotionThreshold,
+                    defaultDevice.RegisteredAt,
+                    defaultDevice.LastSeenAt
+                ));
+            }
+
             return Ok(ownedDevices);
         }
 
         [HttpGet("{id:guid}")]
         public async Task<IActionResult> GetDevice(Guid id)
         {
+            var userId = CurrentUserId;
             var device = await _db.Devices
                 .Include(d => d.Zone)
-                .FirstOrDefaultAsync(d => d.Id == id && (IsAdmin || d.OwnerId == CurrentUserId ||
-                    _db.MemberAccesses.Any(m => m.MemberUserId == CurrentUserId && (m.DeviceId == id || m.DeviceId == null))));
+                .FirstOrDefaultAsync(d => d.Id == id && (IsAdmin || d.OwnerId == userId ||
+                    _db.MemberAccesses.Any(m => m.MemberUserId == userId && m.OwnerId == d.OwnerId && (m.DeviceId == id || m.DeviceId == null))));
 
             if (device == null) return NotFound(new { message = "Không tìm thấy thiết bị." });
 
@@ -112,10 +167,24 @@ namespace SmartGuard.API.Controllers
         [HttpPost]
         public async Task<IActionResult> CreateDevice([FromBody] CreateDeviceDto dto)
         {
+            var userId = CurrentUserId;
+            if (userId == Guid.Empty) return Unauthorized();
+
+            var deviceName = (dto.Name ?? string.Empty).Trim();
+            if (string.IsNullOrWhiteSpace(deviceName))
+                return BadRequest(new { message = "Tên thiết bị không được để trống." });
+
+            string? zoneName = null;
+            if (dto.ZoneId.HasValue)
+            {
+                var zone = await _db.Zones.FirstOrDefaultAsync(z => z.Id == dto.ZoneId.Value && (IsAdmin || z.OwnerId == userId));
+                if (zone != null) zoneName = zone.Name;
+            }
+
             var device = new GuardDevice
             {
-                OwnerId = CurrentUserId,
-                Name = dto.Name.Trim(),
+                OwnerId = userId,
+                Name = deviceName,
                 Description = dto.Description?.Trim() ?? string.Empty,
                 ZoneId = dto.ZoneId,
                 NoiseThreshold = dto.NoiseThreshold,
@@ -132,7 +201,7 @@ namespace SmartGuard.API.Controllers
                 device.Id,
                 device.OwnerId,
                 device.ZoneId,
-                null,
+                zoneName,
                 device.Name,
                 device.DeviceCode,
                 device.Description,
@@ -147,7 +216,8 @@ namespace SmartGuard.API.Controllers
         [HttpPut("{id:guid}")]
         public async Task<IActionResult> UpdateDevice(Guid id, [FromBody] UpdateDeviceDto dto)
         {
-            var device = await _db.Devices.FirstOrDefaultAsync(d => d.Id == id && (IsAdmin || d.OwnerId == CurrentUserId));
+            var userId = CurrentUserId;
+            var device = await _db.Devices.FirstOrDefaultAsync(d => d.Id == id && (IsAdmin || d.OwnerId == userId));
             if (device == null) return NotFound(new { message = "Không tìm thấy thiết bị hoặc không có quyền." });
 
             if (!string.IsNullOrWhiteSpace(dto.Name)) device.Name = dto.Name.Trim();
@@ -164,12 +234,14 @@ namespace SmartGuard.API.Controllers
         [HttpPatch("{id:guid}/toggle-arm")]
         public async Task<IActionResult> ToggleArm(Guid id)
         {
-            var device = await _db.Devices.FirstOrDefaultAsync(d => d.Id == id && (IsAdmin || d.OwnerId == CurrentUserId ||
-                _db.MemberAccesses.Any(m => m.MemberUserId == CurrentUserId && m.CanAcknowledge)));
+            var userId = CurrentUserId;
+            var device = await _db.Devices.FirstOrDefaultAsync(d => d.Id == id && (IsAdmin || d.OwnerId == userId ||
+                _db.MemberAccesses.Any(m => m.MemberUserId == userId && m.OwnerId == d.OwnerId && m.CanAcknowledge && (m.DeviceId == id || m.DeviceId == null))));
 
             if (device == null) return NotFound(new { message = "Không tìm thấy thiết bị." });
 
             device.IsArmed = !device.IsArmed;
+            device.LastSeenAt = DateTime.UtcNow;
             await _db.SaveChangesAsync();
 
             return Ok(new { isArmed = device.IsArmed, message = device.IsArmed ? "Đã bật chế độ cảnh giác!" : "Đã tắt cảnh giác." });
@@ -178,8 +250,16 @@ namespace SmartGuard.API.Controllers
         [HttpDelete("{id:guid}")]
         public async Task<IActionResult> DeleteDevice(Guid id)
         {
-            var device = await _db.Devices.FirstOrDefaultAsync(d => d.Id == id && (IsAdmin || d.OwnerId == CurrentUserId));
+            var userId = CurrentUserId;
+            var device = await _db.Devices.FirstOrDefaultAsync(d => d.Id == id && (IsAdmin || d.OwnerId == userId));
             if (device == null) return NotFound(new { message = "Không tìm thấy thiết bị hoặc không có quyền." });
+
+            // Dọn dẹp EvidenceImages liên kết với thiết bị này trước khi xóa để không bị lỗi FK_EvidenceImages_AlertEvents
+            var evidences = await _db.EvidenceImages.Where(e => e.DeviceId == id).ToListAsync();
+            if (evidences.Count > 0) _db.EvidenceImages.RemoveRange(evidences);
+
+            var memberAccesses = await _db.MemberAccesses.Where(m => m.DeviceId == id).ToListAsync();
+            if (memberAccesses.Count > 0) _db.MemberAccesses.RemoveRange(memberAccesses);
 
             _db.Devices.Remove(device);
             await _db.SaveChangesAsync();
@@ -188,9 +268,28 @@ namespace SmartGuard.API.Controllers
         }
 
         [HttpPost("pair")]
-        public async Task<IActionResult> PairDevice([FromBody] string deviceCode)
+        public async Task<IActionResult> PairDevice([FromBody] JsonElement body, [FromQuery] string? deviceCode = null)
         {
-            var code = deviceCode.Trim().ToUpper();
+            string? rawCode = deviceCode;
+            if (string.IsNullOrWhiteSpace(rawCode))
+            {
+                if (body.ValueKind == JsonValueKind.String)
+                {
+                    rawCode = body.GetString();
+                }
+                else if (body.ValueKind == JsonValueKind.Object)
+                {
+                    if (body.TryGetProperty("deviceCode", out var p1) && p1.ValueKind == JsonValueKind.String)
+                        rawCode = p1.GetString();
+                    else if (body.TryGetProperty("code", out var p2) && p2.ValueKind == JsonValueKind.String)
+                        rawCode = p2.GetString();
+                }
+            }
+
+            if (string.IsNullOrWhiteSpace(rawCode))
+                return BadRequest(new { message = "Vui lòng cung cấp mã thiết bị (deviceCode)." });
+
+            var code = rawCode.Trim().ToUpperInvariant();
             var device = await _db.Devices.FirstOrDefaultAsync(d => d.DeviceCode == code);
             if (device == null) return NotFound(new { message = "Mã thiết bị không tồn tại." });
 

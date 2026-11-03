@@ -18,7 +18,7 @@ var rawConnectionString = builder.Configuration.GetConnectionString("DefaultConn
     ?? "Server=DESKTOP-IIQVP6N;Database=SmartGuard_Unified_DB;Trusted_Connection=True;TrustServerCertificate=True;";
 var connectionString = rawConnectionString.Contains("Connect Timeout=", StringComparison.OrdinalIgnoreCase)
     ? rawConnectionString
-    : $"{rawConnectionString.TrimEnd(';')};Connect Timeout=5;";
+    : $"{rawConnectionString.TrimEnd(';')};Connect Timeout=15;";
 
 builder.Services.AddDbContext<SmartGuardDbContext>(options =>
     options.UseSqlServer(connectionString, sql =>
@@ -169,11 +169,10 @@ app.Lifetime.ApplicationStarted.Register(() =>
         }
         catch (Exception ex)
         {
-            logger.LogError(ex, "Lỗi trong quá trình khởi tạo CSDL.");
+            logger.LogWarning(ex, "Bỏ qua quá trình seed dữ liệu tự động do giới hạn kết nối hoặc quyền truy cập CSDL.");
         }
     });
 });
-
 // 8. Cấu hình HTTP Pipeline
 if (app.Environment.IsDevelopment())
 {
@@ -189,7 +188,19 @@ app.UseCors("AllowAll");
 
 // Cho phép load trang chủ index.html mặc định và tài nguyên tĩnh Web Dashboard Capybara Security
 app.UseDefaultFiles();
-app.UseStaticFiles(); // Cho phép truy cập ảnh bằng chứng tại /evidence/... và Web Dashboard Capybara Security
+app.UseStaticFiles(new StaticFileOptions
+{
+    OnPrepareResponse = ctx =>
+    {
+        var name = ctx.File.Name.ToLowerInvariant();
+        if (name.EndsWith(".html") || name.EndsWith(".js") || name.EndsWith(".css"))
+        {
+            ctx.Context.Response.Headers["Cache-Control"] = "no-cache, no-store, must-revalidate";
+            ctx.Context.Response.Headers["Pragma"] = "no-cache";
+            ctx.Context.Response.Headers["Expires"] = "0";
+        }
+    }
+}); // Cho phép truy cập ảnh bằng chứng tại /evidence/... và Web Dashboard Capybara Security
 
 app.UseRateLimiter();
 app.UseAuthentication();
@@ -202,7 +213,56 @@ app.MapGet("/api/status", () => Results.Ok(new
     service = "SmartGuard Unified Security API - Capybara Edition",
     status = "Online",
     version = "2.5.0-capy",
-    docs = "/swagger"
+    docs = "/swagger",
+    dbCheckUrl = "/api/status/db"
 }));
+
+app.MapGet("/api/status/db", async (SmartGuardDbContext db) =>
+{
+    var sw = System.Diagnostics.Stopwatch.StartNew();
+    try
+    {
+        var canConnect = await db.Database.CanConnectAsync();
+        if (!canConnect)
+        {
+            return Results.Json(new
+            {
+                connected = false,
+                elapsedMs = sw.ElapsedMilliseconds,
+                database = db.Database.GetDbConnection().Database,
+                dataSource = db.Database.GetDbConnection().DataSource,
+                message = "Không thể kết nối tới SQL Server. Vui lòng kiểm tra chuỗi kết nối (ConnectionString) hoặc mạng Internet."
+            }, statusCode: 503);
+        }
+
+        var users = await db.Users
+            .Select(u => new { u.Id, u.Username, u.Email, u.Role, u.IsLocked })
+            .ToListAsync();
+
+        return Results.Ok(new
+        {
+            connected = true,
+            elapsedMs = sw.ElapsedMilliseconds,
+            database = db.Database.GetDbConnection().Database,
+            dataSource = db.Database.GetDbConnection().DataSource,
+            userCount = users.Count,
+            users,
+            message = "Kết nối Cơ sở dữ liệu (Database) thành công!"
+        });
+    }
+    catch (Exception ex)
+    {
+        return Results.Json(new
+        {
+            connected = false,
+            elapsedMs = sw.ElapsedMilliseconds,
+            database = db.Database.GetDbConnection().Database,
+            dataSource = db.Database.GetDbConnection().DataSource,
+            error = ex.Message,
+            innerError = ex.InnerException?.Message,
+            message = $"Lỗi kết nối hoặc truy vấn Database: {ex.InnerException?.Message ?? ex.Message}"
+        }, statusCode: 500);
+    }
+});
 
 app.Run();

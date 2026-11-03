@@ -15,10 +15,10 @@ document.addEventListener('DOMContentLoaded', () => {
     adaptiveProfiles: [],
     activeProfile: 'Home',
     stats: {
-      connectedCameras: 2,
-      activeCameras: 2,
-      motionEventsToday: 7,
-      totalRecordings: 24
+      connectedCameras: 0,
+      activeCameras: 0,
+      motionEventsToday: 0,
+      totalRecordings: 0
     },
     filter: {
       eventSeverity: 'all',
@@ -37,6 +37,98 @@ document.addEventListener('DOMContentLoaded', () => {
   const breadcrumbCurrent = document.getElementById('breadcrumbCurrent');
   const modePillButtons = document.querySelectorAll('.mode-pill-btn');
   const toastContainer = document.getElementById('toastContainer');
+
+  // Emergency Alarm Sound Synthesizer (Web Audio API)
+  const AlarmSoundService = {
+    audioCtx: null,
+    oscillator: null,
+    gainNode: null,
+    timer: null,
+    isPlaying: false,
+
+    startSiren(durationSeconds = 0) {
+      if (this.isPlaying) return;
+      try {
+        const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+        if (!AudioContextClass) return;
+        this.audioCtx = new AudioContextClass();
+        if (this.audioCtx.state === 'suspended') {
+          this.audioCtx.resume();
+        }
+
+        const osc = this.audioCtx.createOscillator();
+        const gain = this.audioCtx.createGain();
+
+        osc.type = 'sawtooth';
+        const now = this.audioCtx.currentTime;
+        osc.frequency.setValueAtTime(750, now);
+        for (let i = 0; i < 50; i++) {
+          osc.frequency.linearRampToValueAtTime(1250, now + (i * 0.8) + 0.4);
+          osc.frequency.linearRampToValueAtTime(750, now + ((i + 1) * 0.8));
+        }
+
+        gain.gain.setValueAtTime(0.2, now);
+        osc.connect(gain);
+        gain.connect(this.audioCtx.destination);
+
+        osc.start();
+        this.oscillator = osc;
+        this.gainNode = gain;
+        this.isPlaying = true;
+
+        const btnSilence = document.getElementById('btnSilenceSiren');
+        if (btnSilence) btnSilence.style.display = 'inline-block';
+
+        if (durationSeconds > 0) {
+          this.timer = setTimeout(() => {
+            this.stopSiren();
+          }, durationSeconds * 1000);
+        }
+      } catch (err) {
+        console.warn('Alarm sound could not start:', err);
+      }
+    },
+
+    stopSiren() {
+      if (this.timer) clearTimeout(this.timer);
+      this.timer = null;
+      if (!this.isPlaying) return;
+      try {
+        if (this.oscillator) {
+          this.oscillator.stop();
+          this.oscillator.disconnect();
+        }
+        if (this.audioCtx) {
+          this.audioCtx.close();
+        }
+      } catch (_) {}
+      this.isPlaying = false;
+      this.oscillator = null;
+      this.gainNode = null;
+      this.audioCtx = null;
+
+      const btnSilence = document.getElementById('btnSilenceSiren');
+      if (btnSilence) btnSilence.style.display = 'none';
+    }
+  };
+
+  // Notification Badge Manager
+  function updateNotificationBadge() {
+    const badge = document.getElementById('topbarNotifBadge');
+    if (!badge) return;
+    const unresolvedAlerts = (state.alerts || []).filter(a => {
+      const st = (a.status || '').toLowerCase();
+      return st === 'triggered' || st === 'active' || (!a.isResolved && st !== 'resolved' && st !== 'knownperson' && st !== 'muted');
+    });
+    const count = unresolvedAlerts.length;
+    if (count > 0) {
+      badge.textContent = count > 99 ? '99+' : count;
+      badge.style.display = 'inline-flex';
+    } else {
+      badge.style.display = 'none';
+      badge.textContent = '0';
+    }
+  }
 
   // Initialize
   initApp();
@@ -214,54 +306,80 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   }
 
-  // Data Loading with Resilient Fallback
+  // Data Loading with Resilient Fallback (Only use mock data for unauthenticated visitors)
   async function loadInitialData() {
     try {
+      const isAuth = SmartGuardApi.isAuthenticated();
+
       // 1. Devices
       try {
         const devs = await SmartGuardApi.getDevices();
-        if (devs && devs.length > 0) state.devices = devs;
+        if (Array.isArray(devs)) {
+          state.devices = devs;
+        } else if (!isAuth) {
+          useDefaultDevices();
+        } else {
+          state.devices = [];
+        }
       } catch (err) {
-        useDefaultDevices();
+        state.devices = isAuth ? [] : useDefaultDevices();
       }
 
       // 2. Zones
       try {
         const z = await SmartGuardApi.getZones();
-        if (z && z.length > 0) state.zones = z;
+        if (Array.isArray(z)) {
+          state.zones = z;
+        } else if (!isAuth) {
+          useDefaultZones();
+        } else {
+          state.zones = [];
+        }
       } catch (err) {
-        useDefaultZones();
+        state.zones = isAuth ? [] : useDefaultZones();
       }
 
       // 3. Alerts
       try {
         const a = await SmartGuardApi.getAlertHistory(40);
-        if (a && a.length > 0) state.alerts = a;
+        if (Array.isArray(a)) {
+          state.alerts = a;
+        } else if (!isAuth) {
+          useDefaultAlerts();
+        } else {
+          state.alerts = [];
+        }
       } catch (err) {
-        useDefaultAlerts();
+        state.alerts = isAuth ? [] : useDefaultAlerts();
       }
 
       // 4. Evidence / Recordings
       try {
         const recs = await SmartGuardApi.getEvidenceList(40);
-        if (recs && recs.length > 0) state.recordings = recs;
+        if (Array.isArray(recs)) {
+          state.recordings = recs;
+        } else if (!isAuth) {
+          useDefaultRecordings();
+        } else {
+          state.recordings = [];
+        }
       } catch (err) {
-        useDefaultRecordings();
+        state.recordings = isAuth ? [] : useDefaultRecordings();
       }
 
       // 5. Adaptive Profiles
       try {
         const profs = await SmartGuardApi.getAdaptiveProfiles();
-        if (profs && profs.length > 0) state.adaptiveProfiles = profs;
+        if (Array.isArray(profs) && profs.length > 0) state.adaptiveProfiles = profs;
       } catch {}
 
-      // 6. Admin stats
+      // 6. Admin stats (chỉ đồng bộ số thực)
       try {
         const st = await SmartGuardApi.getDashboardStats();
-        if (st) {
-          state.stats.connectedCameras = st.totalDevices || state.devices.length;
-          state.stats.activeCameras = st.activeArmedDevices || state.devices.filter(d => d.isArmed).length;
-          state.stats.motionEventsToday = st.totalAlertsToday || 7;
+        if (st && isAuth) {
+          state.stats.connectedCameras = st.totalDevices ?? state.devices.length;
+          state.stats.activeCameras = st.activeArmedDevices ?? state.devices.filter(d => d.isArmed).length;
+          state.stats.motionEventsToday = st.totalAlertsToday ?? state.alerts.length;
         }
       } catch {}
 
@@ -432,16 +550,50 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // View 1: Dashboard
   function renderDashboard() {
-    // 1. Stats Counter
+    // 1. Stats Counter (Hiển thị số liệu thực tế của tài khoản)
     const connEl = document.getElementById('statConnected');
     const armedEl = document.getElementById('statArmed');
     const motionEl = document.getElementById('statMotion');
     const recsEl = document.getElementById('statRecordings');
 
-    if (connEl) connEl.textContent = state.devices.length;
-    if (armedEl) armedEl.textContent = state.devices.filter(d => d.isArmed).length;
-    if (motionEl) motionEl.textContent = state.alerts.length || 7;
-    if (recsEl) recsEl.textContent = state.recordings.length || 24;
+    const connSub = document.getElementById('statConnectedSub');
+    const armedSub = document.getElementById('statArmedSub');
+    const motionSub = document.getElementById('statMotionSub');
+    const recsSub = document.getElementById('statRecordingsSub');
+
+    const totalDevs = state.devices.length;
+    const onlineDevs = state.devices.filter(d => isDeviceOnline(d.lastSeenAt)).length;
+    const armedDevs = state.devices.filter(d => d.isArmed).length;
+    const totalAlerts = state.alerts.length;
+    const totalRecs = state.recordings.length;
+
+    let totalRecMb = 0;
+    state.recordings.forEach(r => { totalRecMb += (r.sizeMb || 3.5); });
+
+    if (connEl) connEl.textContent = totalDevs;
+    if (armedEl) armedEl.textContent = armedDevs;
+    if (motionEl) motionEl.textContent = totalAlerts;
+    if (recsEl) recsEl.textContent = totalRecs;
+
+    if (connSub) {
+      connSub.textContent = totalDevs === 0 ? '0% Online' : `${Math.round((onlineDevs / totalDevs) * 100)}% Online`;
+      connSub.style.color = totalDevs > 0 && onlineDevs > 0 ? 'var(--success-green)' : 'var(--secondary-text)';
+    }
+
+    if (armedSub) {
+      armedSub.textContent = armedDevs > 0 ? 'Đang bảo vệ' : 'Chờ kích hoạt';
+      armedSub.style.color = armedDevs > 0 ? 'var(--success-green)' : 'var(--secondary-text)';
+    }
+
+    if (motionSub) {
+      motionSub.textContent = totalAlerts === 0 ? '0 Đã lọc' : `${totalAlerts} Đã phát hiện`;
+      motionSub.style.color = totalAlerts > 0 ? 'var(--warning-yellow)' : 'var(--secondary-text)';
+    }
+
+    if (recsSub) {
+      recsSub.textContent = totalRecs === 0 ? '0 MB Đã dùng' : (totalRecMb > 1024 ? `${(totalRecMb / 1024).toFixed(1)} GB Đã dùng` : `${totalRecMb.toFixed(1)} MB Đã dùng`);
+      recsSub.style.color = totalRecs > 0 ? 'var(--security-blue)' : 'var(--secondary-text)';
+    }
 
     // 2. Camera Grid in Dashboard
     const gridEl = document.getElementById('dashboardCameraGrid');
@@ -598,24 +750,38 @@ document.addEventListener('DOMContentLoaded', () => {
     const zonesListEl = document.getElementById('motionZonesContainer');
     if (!zonesListEl) return;
 
+    if (state.zones.length === 0) {
+      zonesListEl.innerHTML = `
+        <div class="empty-state-box" style="padding: 30px 15px; text-align: center;">
+          <img src="/images/finding.png" class="empty-state-mascot" style="width: 60px; height: 60px; margin-bottom: 10px;" alt="No Zones">
+          <h4 class="empty-state-title" style="font-size: 1rem; margin-bottom: 4px;">Chưa có phân vùng an ninh nào</h4>
+          <p class="empty-state-desc" style="font-size: 0.8rem; margin-bottom: 14px;">Tạo khu vực (Cổng chính, Phòng khách, Ban công...) để gắn camera và áp dụng kịch bản bảo vệ.</p>
+          <button class="btn btn-primary btn-sm" onclick="window.SmartGuardApp.openAddZoneModal()">
+            + Tạo Phân Vùng Đầu Tiên
+          </button>
+        </div>
+      `;
+      return;
+    }
+
     zonesListEl.innerHTML = state.zones.map(zone => {
+      const devCount = state.devices.filter(d => d.zoneId === zone.id).length;
       return `
-        <div class="card" style="padding: 18px; margin-bottom: 14px;">
+        <div class="card" style="padding: 16px; margin-bottom: 12px;">
           <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 8px;">
             <div>
               <h4 style="font-size: 1rem; font-weight: 700; color: var(--primary-navy);">${escapeHtml(zone.name)}</h4>
-              <p style="font-size: 0.8rem; color: var(--secondary-text);">${escapeHtml(zone.description || 'No description')}</p>
+              <p style="font-size: 0.8rem; color: var(--secondary-text);">${escapeHtml(zone.description || 'Chưa có mô tả vị trí')}</p>
             </div>
-            <span class="badge badge-info">${zone.deviceCount || 1} Camera</span>
+            <span class="badge badge-info">${devCount} Camera</span>
           </div>
-          <div style="display: flex; align-items: center; justify-content: space-between; padding-top: 10px; border-top: 1px solid var(--border-gray);">
+          <div style="display: flex; align-items: center; justify-content: space-between; padding-top: 10px; border-top: 1px solid var(--border-light, #e2e8f0);">
             <div style="display: flex; gap: 12px; font-size: 0.78rem; font-weight: 600; color: var(--security-blue);">
-              <span>🔔 Sound: ON</span>
-              <span>💬 Discord: ON</span>
+              <span>🔔 Còi: Bật</span>
+              <span>💬 Discord: Bật</span>
             </div>
             <div style="display: flex; gap: 6px;">
-              <button class="btn btn-outline btn-sm" onclick="window.SmartGuardApp.editZone('${zone.id}', '${escapeHtml(zone.name)}')">Edit</button>
-              <button class="btn btn-outline btn-sm" style="color: var(--danger-red);" onclick="window.SmartGuardApp.deleteZone('${zone.id}')">Delete</button>
+              <button class="btn btn-outline btn-sm" style="color: var(--danger-red); border-color: #fca5a5;" onclick="window.SmartGuardApp.deleteZone('${zone.id}')">Xóa</button>
             </div>
           </div>
         </div>
@@ -641,6 +807,7 @@ document.addEventListener('DOMContentLoaded', () => {
           <p class="empty-state-desc">Your perimeter is quiet and protected under Capybara security patrol.</p>
         </div>
       `;
+      updateNotificationBadge();
       return;
     }
 
@@ -674,6 +841,7 @@ document.addEventListener('DOMContentLoaded', () => {
         </div>
       `;
     }).join('');
+    updateNotificationBadge();
   }
 
   // View 6: Recordings Gallery
@@ -719,17 +887,21 @@ document.addEventListener('DOMContentLoaded', () => {
   // View 7: Storage Management
   function renderStorage() {
     const count = state.recordings.length;
-    const estMb = count * 3.8;
-    const usedGb = (estMb / 1024 + 1.2).toFixed(1);
-    const freeGb = (100 - usedGb).toFixed(1);
+    let totalMb = 0;
+    state.recordings.forEach(r => { totalMb += (r.sizeMb || 3.5); });
+
+    const usedGb = totalMb / 1024;
+    const freeGb = Math.max(0, 100 - usedGb).toFixed(1);
     const pct = Math.min(Math.round((usedGb / 100) * 100), 100);
 
     const usedEl = document.getElementById('storageUsedText');
     const freeEl = document.getElementById('storageFreeText');
     const barEl = document.getElementById('storageUsedBar');
 
-    if (usedEl) usedEl.textContent = `${usedGb} GB Used`;
-    if (freeEl) freeEl.textContent = `${freeGb} GB Free (100 GB Total)`;
+    const usedText = count === 0 ? '0 MB Đã dùng' : (totalMb > 1024 ? `${usedGb.toFixed(1)} GB Đã dùng` : `${totalMb.toFixed(1)} MB Đã dùng`);
+
+    if (usedEl) usedEl.textContent = usedText;
+    if (freeEl) freeEl.textContent = `${freeGb} GB Còn trống (100 GB Cloud)`;
     if (barEl) barEl.style.width = `${pct}%`;
   }
 
@@ -867,6 +1039,10 @@ document.addEventListener('DOMContentLoaded', () => {
         btn.classList.add('active');
         const target = document.getElementById(`tab-pane-${tab}`);
         if (target) target.classList.add('active');
+
+        if (tab === 'notifications') {
+          window.SmartGuardApp.loadDiscordSettings();
+        }
       });
     });
   }
@@ -876,19 +1052,65 @@ document.addEventListener('DOMContentLoaded', () => {
     const loginForm = document.getElementById('loginForm');
     const registerForm = document.getElementById('registerForm');
     const btnQuickAdmin = document.getElementById('btnQuickAdminLogin');
+    const tabLogin = document.getElementById('authTabLogin');
+    const tabRegister = document.getElementById('authTabRegister');
+    const footerSwitch = document.getElementById('authFooterSwitch');
+    const cardTitle = document.getElementById('authCardTitle');
+    const cardSubtitle = document.getElementById('authCardSubtitle');
+
+    function switchAuthMode(mode) {
+      const isReg = mode === 'register';
+      if (loginForm) loginForm.style.display = isReg ? 'none' : 'block';
+      if (registerForm) registerForm.style.display = isReg ? 'block' : 'none';
+      if (tabLogin) {
+        tabLogin.className = isReg ? 'btn btn-outline btn-sm' : 'btn btn-primary btn-sm';
+        if (isReg) tabLogin.style.border = 'none';
+      }
+      if (tabRegister) {
+        tabRegister.className = isReg ? 'btn btn-primary btn-sm' : 'btn btn-outline btn-sm';
+        if (!isReg) tabRegister.style.border = 'none';
+      }
+      if (cardTitle) {
+        cardTitle.textContent = isReg ? 'Create Guardian Account' : 'Security Guardian Login';
+      }
+      if (cardSubtitle) {
+        cardSubtitle.textContent = isReg
+          ? 'Register a new account to monitor your cameras and receive OTP alerts'
+          : 'Authenticate to access smart home camera surveillance';
+      }
+      if (footerSwitch) {
+        footerSwitch.innerHTML = isReg
+          ? 'Already have an account? <a href="#auth" id="linkSwitchToLogin" style="font-weight: 700; color: var(--security-blue);">Sign In</a>'
+          : 'Don\'t have a camera account? <a href="#auth" id="linkSwitchToRegister" style="font-weight: 700; color: var(--security-blue);">Register New Account</a>';
+        const linkReg = document.getElementById('linkSwitchToRegister');
+        const linkLog = document.getElementById('linkSwitchToLogin');
+        if (linkReg) linkReg.addEventListener('click', (e) => { e.preventDefault(); switchAuthMode('register'); });
+        if (linkLog) linkLog.addEventListener('click', (e) => { e.preventDefault(); switchAuthMode('login'); });
+      }
+    }
+
+    if (tabLogin) tabLogin.addEventListener('click', () => switchAuthMode('login'));
+    if (tabRegister) tabRegister.addEventListener('click', () => switchAuthMode('register'));
+    const initLinkReg = document.getElementById('linkSwitchToRegister');
+    if (initLinkReg) {
+      initLinkReg.addEventListener('click', (e) => {
+        e.preventDefault();
+        switchAuthMode('register');
+      });
+    }
 
     if (loginForm) {
       loginForm.addEventListener('submit', async (e) => {
         e.preventDefault();
-        const iden = document.getElementById('loginIdentifier').value;
+        const iden = document.getElementById('loginIdentifier').value.trim();
         const pass = document.getElementById('loginPassword').value;
 
         showToast('Authenticating with Capybara Security...', 'info');
         try {
           const res = await SmartGuardApi.login(iden, pass);
           if (res.challengeId) {
-            // Open OTP Challenge Modal
-            openOtpModal(res.challengeId, res.email);
+            // Open OTP Challenge Modal (pass devOtp if returned for .local or SMTP fallback)
+            openOtpModal(res.challengeId, res.email, res.devOtp, res.message);
           } else if (res.token) {
             showToast('Login successful! Welcome Guardian.', 'success');
             checkUserSession();
@@ -911,14 +1133,30 @@ document.addEventListener('DOMContentLoaded', () => {
     if (registerForm) {
       registerForm.addEventListener('submit', async (e) => {
         e.preventDefault();
-        const email = document.getElementById('regEmail').value;
-        const username = document.getElementById('regUsername').value;
+        const username = document.getElementById('regUsername').value.trim();
+        const email = document.getElementById('regEmail').value.trim();
         const password = document.getElementById('regPassword').value;
+        const confirmPassword = document.getElementById('regConfirmPassword')?.value ?? password;
+
+        if (username.length < 3) {
+          showToast('Username must be at least 3 characters.', 'warning');
+          return;
+        }
+        if (password.length < 6) {
+          showToast('Password must be at least 6 characters.', 'warning');
+          return;
+        }
+        if (password !== confirmPassword) {
+          showToast('Passwords do not match.', 'danger');
+          return;
+        }
 
         try {
           await SmartGuardApi.register({ email, username, password, role: 'Owner' });
-          showToast('Registration successful! Please login.', 'success');
-          document.getElementById('authTabLogin').click();
+          showToast('Registration successful! You can now sign in.', 'success');
+          document.getElementById('loginIdentifier').value = email;
+          document.getElementById('loginPassword').value = password;
+          switchAuthMode('login');
         } catch (err) {
           showToast(err.message || 'Registration failed.', 'danger');
         }
@@ -956,22 +1194,65 @@ document.addEventListener('DOMContentLoaded', () => {
     if (backdrop) backdrop.classList.remove('active');
   }
 
-  function openOtpModal(challengeId, maskedEmail) {
+  function openOtpModal(challengeId, maskedEmail, devOtp, serverMessage) {
+    const fallbackHelp = devOtp
+      ? `<details style="margin-top: 14px; text-align: left; font-size: 0.8rem; border-top: 1px dashed #cbd5e1; padding-top: 10px;">
+           <summary style="cursor: pointer; color: #64748b; font-weight: 500;">
+             ❓ Không nhận được mã qua Email? (Hỗ trợ Thử nghiệm / Demo)
+           </summary>
+           <div style="margin-top: 8px; padding: 10px; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; color: #475569; font-size: 0.78rem; line-height: 1.5;">
+             Do môi trường Cloud miễn phí có thể giới hạn kết nối thư SMTP, mã xác thực dự phòng của phiên này là:
+             <div style="text-align: center; margin: 8px 0;">
+               <span style="font-family: monospace; font-size: 1.25rem; font-weight: 800; letter-spacing: 4px; color: #2563eb; background: #eff6ff; padding: 4px 14px; border-radius: 6px; border: 1px solid #bfdbfe;">${escapeHtml(devOtp)}</span>
+             </div>
+             Vui lòng nhập mã trên vào ô nhập để tiếp tục.
+           </div>
+         </details>`
+      : '';
+
     openModal(`
-      <div style="text-align: center; padding: 10px;">
-        <img src="/images/lock.png" style="width: 80px; height: 80px; margin-bottom: 12px;" alt="OTP">
-        <h3 style="color: var(--primary-navy); margin-bottom: 6px;">Two-Factor Verification</h3>
-        <p style="font-size: 0.88rem; color: var(--secondary-text); margin-bottom: 18px;">
-          A 6-digit OTP code was sent to <strong>${maskedEmail || 'your email'}</strong>
+      <div style="text-align: center; padding: 8px 6px;">
+        <img src="/images/lock.png" style="width: 76px; height: 76px; margin-bottom: 12px; object-fit: contain;" alt="OTP">
+        <h3 style="color: var(--primary-navy); margin-bottom: 6px; font-weight: 700; font-size: 1.25rem;">Xác thực bảo mật 2 lớp (2FA)</h3>
+        
+        <p style="font-size: 0.88rem; color: var(--secondary-text); margin-bottom: 14px; line-height: 1.5;">
+          Mã xác thực 6 chữ số đã được gửi đến:<br>
+          <strong style="color: var(--primary-navy); font-size: 0.95rem; font-family: monospace;">${escapeHtml(maskedEmail || 'email của bạn')}</strong>
         </p>
-        <div class="form-group">
-          <input type="text" id="otpInputCode" class="form-input" placeholder="Enter 6-digit code" maxlength="6" style="text-align: center; font-size: 1.4rem; letter-spacing: 6px; font-family: monospace;">
+
+        <div style="font-size: 0.82rem; color: #166534; margin-bottom: 16px; background: #f0fdf4; border: 1px solid #bbf7d0; border-radius: 8px; padding: 10px 12px; text-align: left;">
+          📩 Vui lòng kiểm tra hộp thư đến hoặc mục <strong>Spam / Thư rác</strong> trên Gmail của bạn. Mã có hiệu lực trong vòng <strong>5 phút</strong>.
         </div>
-        <button class="btn btn-primary btn-lg" style="width: 100%;" onclick="window.SmartGuardApp.submitOtp('${challengeId}')">
-          Verify & Access Dashboard
-        </button>
+
+        <div class="form-group" style="margin-bottom: 16px;">
+          <input type="text" 
+                 id="otpInputCode" 
+                 class="form-input" 
+                 value="" 
+                 placeholder="------" 
+                 maxlength="6" 
+                 inputmode="numeric" 
+                 autocomplete="one-time-code"
+                 style="text-align: center; font-size: 1.6rem; letter-spacing: 8px; font-family: monospace; font-weight: 700; height: 50px;">
+        </div>
+
+        <div style="display: flex; gap: 10px;">
+          <button class="btn btn-outline" style="flex: 1;" onclick="window.SmartGuardApp.closeModal()">
+            Hủy
+          </button>
+          <button class="btn btn-primary" style="flex: 2; font-weight: 600;" onclick="window.SmartGuardApp.submitOtp('${challengeId}')">
+            Xác nhận &amp; Đăng nhập
+          </button>
+        </div>
+
+        ${fallbackHelp}
       </div>
     `);
+
+    setTimeout(() => {
+      const input = document.getElementById('otpInputCode');
+      if (input) input.focus();
+    }, 150);
   }
 
   // Toasts
@@ -1029,6 +1310,37 @@ document.addEventListener('DOMContentLoaded', () => {
   // Global App Actions for Inline Handlers
   window.SmartGuardApp = {
     navigateTo,
+    switchAuthMode(mode) {
+      const isReg = mode === 'register';
+      const loginForm = document.getElementById('loginForm');
+      const registerForm = document.getElementById('registerForm');
+      const tabLogin = document.getElementById('authTabLogin');
+      const tabRegister = document.getElementById('authTabRegister');
+      const footerSwitch = document.getElementById('authFooterSwitch');
+      const cardTitle = document.getElementById('authCardTitle');
+      const cardSubtitle = document.getElementById('authCardSubtitle');
+      if (loginForm) loginForm.style.display = isReg ? 'none' : 'block';
+      if (registerForm) registerForm.style.display = isReg ? 'block' : 'none';
+      if (tabLogin) {
+        tabLogin.className = isReg ? 'btn btn-outline btn-sm' : 'btn btn-primary btn-sm';
+        tabLogin.style.border = isReg ? 'none' : '';
+      }
+      if (tabRegister) {
+        tabRegister.className = isReg ? 'btn btn-primary btn-sm' : 'btn btn-outline btn-sm';
+        tabRegister.style.border = !isReg ? 'none' : '';
+      }
+      if (cardTitle) cardTitle.textContent = isReg ? 'Create Guardian Account' : 'Security Guardian Login';
+      if (cardSubtitle) {
+        cardSubtitle.textContent = isReg
+          ? 'Register a new account to monitor your cameras and receive OTP alerts'
+          : 'Authenticate to access smart home camera surveillance';
+      }
+      if (footerSwitch) {
+        footerSwitch.innerHTML = isReg
+          ? 'Already have an account? <button type="button" onclick="window.SmartGuardApp.switchAuthMode(\'login\')" style="background: none; border: none; padding: 0; cursor: pointer; font-weight: 700; color: var(--security-blue); font-size: inherit; text-decoration: underline;">Sign In</button>'
+          : 'Don\'t have a camera account? <button type="button" onclick="window.SmartGuardApp.switchAuthMode(\'register\')" style="background: none; border: none; padding: 0; cursor: pointer; font-weight: 700; color: var(--security-blue); font-size: inherit; text-decoration: underline;">Register New Account</button>';
+      }
+    },
     showToast,
     closeModal,
 
@@ -1169,10 +1481,178 @@ document.addEventListener('DOMContentLoaded', () => {
         }
         const alt = state.alerts.find(a => a.id === id);
         if (alt) alt.status = action;
-        showToast(`Alert updated: ${action}`, 'success');
+        if (action === 'mute') {
+          AlarmSoundService.stopSiren();
+        }
+        showToast(`Cập nhật cảnh báo: ${action}`, 'success');
         renderAlerts();
+        updateNotificationBadge();
       } catch (err) {
         showToast(err.message, 'danger');
+      }
+    },
+
+    async loadDiscordSettings() {
+      try {
+        const res = await SmartGuardApi.getDiscordConfig();
+        const input = document.getElementById('cfgDiscordWebhook');
+        if (input && res && res.webhookUrl) {
+          input.value = res.webhookUrl;
+        }
+        const badge = document.getElementById('discordStatusBadge');
+        if (badge) {
+          if (res && res.isConfigured) {
+            badge.className = 'badge badge-success';
+            badge.textContent = 'Đã kết nối';
+          } else {
+            badge.className = 'badge badge-warning';
+            badge.textContent = 'Chưa cấu hình';
+          }
+        }
+      } catch (_) {}
+    },
+
+    async saveDiscordWebhook() {
+      const input = document.getElementById('cfgDiscordWebhook');
+      const val = input?.value?.trim() || '';
+      if (!val) {
+        showToast('Vui lòng dán đường dẫn Discord Webhook hợp lệ.', 'warning');
+        return;
+      }
+      try {
+        const res = await SmartGuardApi.saveDiscordConfig(val);
+        showToast(res.message || 'Đã lưu cấu hình Discord Webhook thành công!', 'success');
+        this.loadDiscordSettings();
+      } catch (err) {
+        showToast(err.message || 'Lỗi lưu cấu hình Discord Webhook.', 'danger');
+      }
+    },
+
+    async testDiscordWebhook() {
+      const input = document.getElementById('cfgDiscordWebhook');
+      const val = input?.value?.trim() || '';
+      showToast('Đang gửi tin nhắn thử nghiệm tới Discord...', 'info');
+      try {
+        const res = await SmartGuardApi.testDiscord(val);
+        if (res && res.success) {
+          showToast('✅ Đã gửi cảnh báo thử nghiệm lên Discord thành công!', 'success');
+          this.loadDiscordSettings();
+        } else {
+          showToast(res.message || 'Không thể gửi tin nhắn tới Discord.', 'danger');
+        }
+      } catch (err) {
+        showToast(err.message || 'Lỗi gửi tin nhắn thử nghiệm tới Discord.', 'danger');
+      }
+    },
+
+    testAlarmSound() {
+      AlarmSoundService.startSiren(5);
+      showToast('🔔 Đang phát thử chuông còi báo động (5 giây)...', 'info');
+    },
+
+    stopAlarmSound() {
+      AlarmSoundService.stopSiren();
+      showToast('🔕 Đã tắt chuông còi báo động.', 'info');
+    },
+
+    async simulateStrangerAlert() {
+      showToast('🚨 Đang kích hoạt cảnh báo Người lạ & gửi Discord...', 'info');
+      AlarmSoundService.startSiren(15);
+      try {
+        const devId = (state.devices && state.devices.length > 0) ? state.devices[0].id : null;
+        await SmartGuardApi.triggerAlert({
+          deviceId: devId,
+          triggerReason: 'PHAT_HIEN_NGUOI_LA',
+          triggerScore: 0.95,
+          severity: 'Critical',
+          imageUrl: '/images/sticker_system(6).png'
+        });
+        showToast('🚨 Cảnh báo Người lạ đã kích hoạt và bắn tin Discord!', 'success');
+        const updated = await SmartGuardApi.getAlertHistory(40);
+        if (Array.isArray(updated)) {
+          state.alerts = updated;
+          renderAlerts();
+          updateNotificationBadge();
+        }
+      } catch (err) {
+        showToast(err.message || 'Lỗi kích hoạt cảnh báo', 'danger');
+      }
+    },
+
+    openAddZoneModal() {
+      openModal(`
+        <div>
+          <div style="display: flex; align-items: center; gap: 12px; margin-bottom: 16px;">
+            <img src="/images/create_accout.png" style="width: 48px; height: 48px; object-fit: contain;" alt="Add Zone">
+            <div>
+              <h3 style="color: var(--primary-navy); margin-bottom: 2px;">Tạo Khu Vực / Phân Vùng Mới</h3>
+              <p style="font-size: 0.85rem; color: var(--secondary-text);">Thiết lập phân vùng an ninh để quản lý camera &amp; cảm biến</p>
+            </div>
+          </div>
+          <div class="form-group" style="margin-bottom: 14px;">
+            <label class="form-label">Tên Phân Vùng / Khu Vực</label>
+            <input type="text" id="newZoneName" class="form-input" placeholder="Ví dụ: Cổng chính, Sân sau, Phòng khách, Ban công...">
+          </div>
+          <div class="form-group" style="margin-bottom: 16px;">
+            <label class="form-label">Mô tả vị trí</label>
+            <input type="text" id="newZoneDesc" class="form-input" placeholder="Ví dụ: Lối ra vào mặt tiền, hàng rào phía sau...">
+          </div>
+          <div style="display: flex; gap: 10px;">
+            <button class="btn btn-outline" style="flex: 1;" onclick="window.SmartGuardApp.closeModal()">Hủy</button>
+            <button class="btn btn-primary" style="flex: 2;" onclick="window.SmartGuardApp.submitNewZone()">+ Tạo Khu Vực</button>
+          </div>
+        </div>
+      `);
+      setTimeout(() => {
+        const input = document.getElementById('newZoneName');
+        if (input) input.focus();
+      }, 150);
+    },
+
+    async submitNewZone() {
+      const name = document.getElementById('newZoneName')?.value?.trim();
+      const description = document.getElementById('newZoneDesc')?.value?.trim() || '';
+
+      if (!name) {
+        showToast('Vui lòng nhập tên khu vực / phân vùng.', 'warning');
+        return;
+      }
+
+      try {
+        let newZone = null;
+        if (SmartGuardApi.isAuthenticated()) {
+          newZone = await SmartGuardApi.createZone({ name, description });
+        } else {
+          newZone = {
+            id: 'zone-' + Date.now(),
+            name,
+            description,
+            deviceCount: 0
+          };
+        }
+
+        if (newZone) {
+          state.zones.push(newZone);
+        }
+        closeModal();
+        showToast(`Đã tạo khu vực an ninh [${name}] thành công!`, 'success');
+        renderZones();
+      } catch (err) {
+        showToast(err.message || 'Lỗi tạo khu vực.', 'danger');
+      }
+    },
+
+    async deleteZone(zoneId) {
+      if (!confirm('Bạn có chắc chắn muốn xóa khu vực an ninh này?')) return;
+      try {
+        if (SmartGuardApi.isAuthenticated()) {
+          await SmartGuardApi.deleteZone(zoneId);
+        }
+        state.zones = state.zones.filter(z => z.id !== zoneId);
+        showToast('Đã xóa khu vực thành công.', 'info');
+        renderZones();
+      } catch (err) {
+        showToast(err.message || 'Lỗi khi xóa khu vực.', 'danger');
       }
     },
 
@@ -1190,20 +1670,20 @@ document.addEventListener('DOMContentLoaded', () => {
     },
 
     async submitOtp(challengeId) {
-      const code = document.getElementById('otpInputCode')?.value;
+      const code = document.getElementById('otpInputCode')?.value?.trim();
       if (!code || code.length < 6) {
-        showToast('Please enter the 6-digit OTP code', 'warning');
+        showToast('Vui lòng nhập đủ 6 chữ số mã xác thực OTP.', 'warning');
         return;
       }
 
       try {
         await SmartGuardApi.verifyOtp(challengeId, code);
         closeModal();
-        showToast('Authentication complete! Welcome.', 'success');
+        showToast('Xác thực 2 lớp thành công! Đang chuyển hướng vào hệ thống...', 'success');
         checkUserSession();
         navigateTo('dashboard');
       } catch (err) {
-        showToast(err.message || 'Invalid OTP code', 'danger');
+        showToast(err.message || 'Mã xác thực không hợp lệ hoặc đã hết hạn.', 'danger');
       }
     },
 

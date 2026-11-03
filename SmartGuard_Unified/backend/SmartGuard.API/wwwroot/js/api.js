@@ -74,7 +74,14 @@ const SmartGuardApi = (function() {
       }
 
       if (!response.ok) {
-        const errorMsg = data?.message || (typeof data === 'string' ? data : 'API Request Failed');
+        let errorMsg = data?.message;
+        if (!errorMsg && data?.errors && typeof data.errors === 'object') {
+          const firstFieldErrors = Object.values(data.errors).flat();
+          if (firstFieldErrors.length > 0) errorMsg = firstFieldErrors.join(' ');
+        }
+        if (!errorMsg) {
+          errorMsg = typeof data === 'string' && data.trim() ? data : `API Error (${response.status})`;
+        }
         throw new Error(errorMsg);
       }
 
@@ -92,6 +99,9 @@ const SmartGuardApi = (function() {
     getUser,
     setUser,
     isAuthenticated: () => !!getToken(),
+    async checkDbStatus() {
+      return await request('/api/status/db');
+    },
 
     // Authentication Endpoints
     async login(identifier, password) {
@@ -224,6 +234,25 @@ const SmartGuardApi = (function() {
       return await request(`/api/Alerts/device/${deviceId}/status`);
     },
 
+    // Discord Integration Endpoints
+    async getDiscordConfig() {
+      return await request('/api/Alerts/discord-config');
+    },
+
+    async saveDiscordConfig(webhookUrl) {
+      return await request('/api/Alerts/discord-config', {
+        method: 'POST',
+        body: JSON.stringify({ webhookUrl })
+      });
+    },
+
+    async testDiscord(webhookUrl) {
+      return await request('/api/Alerts/test-discord', {
+        method: 'POST',
+        body: JSON.stringify({ webhookUrl })
+      });
+    },
+
     // Evidence & Images Endpoints
     async getEvidenceList(limit = 40) {
       return await request(`/api/Images/list?limit=${limit}`);
@@ -262,4 +291,3 @@ const SmartGuardApi = (function() {
 
 // Export globally
 window.SmartGuardApi = SmartGuardApi;
-

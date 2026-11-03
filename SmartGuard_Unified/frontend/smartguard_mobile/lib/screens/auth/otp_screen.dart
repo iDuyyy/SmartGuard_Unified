@@ -26,18 +26,6 @@ class _OtpScreenState extends State<OtpScreen> {
   bool _isLoading = false;
 
   @override
-  void initState() {
-    super.initState();
-    // Nếu ở chế độ LAN/Dev và server trả sẵn devOtp, tự động điền vào 6 ô
-    final code = widget.devOtp;
-    if (code != null && code.length == 6) {
-      for (int i = 0; i < 6; i++) {
-        _pinControllers[i].text = code[i];
-      }
-    }
-  }
-
-  @override
   void dispose() {
     for (var c in _pinControllers) {
       c.dispose();
@@ -49,6 +37,16 @@ class _OtpScreenState extends State<OtpScreen> {
   }
 
   String get _otpCode => _pinControllers.map((c) => c.text).join();
+
+  void _fillFallbackOtp() {
+    final code = widget.devOtp;
+    if (code != null && code.length == 6) {
+      for (int i = 0; i < 6; i++) {
+        _pinControllers[i].text = code[i];
+      }
+      _verifyOtp();
+    }
+  }
 
   Future<void> _verifyOtp() async {
     final code = _otpCode.trim();
@@ -116,10 +114,12 @@ class _OtpScreenState extends State<OtpScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final hasFallbackOtp = widget.devOtp != null && widget.devOtp!.length == 6;
+
     return Scaffold(
       backgroundColor: AppTheme.creamBg,
       appBar: AppBar(
-        title: const Text('Xác thực OTP', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+        title: const Text('Xác thực OTP qua Email', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
       ),
       body: SafeArea(
         child: SingleChildScrollView(
@@ -129,7 +129,6 @@ class _OtpScreenState extends State<OtpScreen> {
             children: [
               const SizedBox(height: 10),
 
-              // Cute Mascot with Mail Envelope
               Center(
                 child: Container(
                   width: 120,
@@ -155,7 +154,7 @@ class _OtpScreenState extends State<OtpScreen> {
               const SizedBox(height: 24),
 
               const Text(
-                'Xác thực OTP',
+                'Xác thực OTP Gmail',
                 textAlign: TextAlign.center,
                 style: TextStyle(
                   fontSize: 24,
@@ -171,7 +170,7 @@ class _OtpScreenState extends State<OtpScreen> {
                 text: TextSpan(
                   style: const TextStyle(fontSize: 13, color: AppTheme.secondaryText, height: 1.5),
                   children: [
-                    const TextSpan(text: 'Chúng tôi đã gửi mã OTP đến email:\n'),
+                    const TextSpan(text: 'Vui lòng kiểm tra hộp thư Gmail và nhập mã OTP đã gửi đến:\n'),
                     TextSpan(
                       text: widget.maskedEmail,
                       style: const TextStyle(fontWeight: FontWeight.bold, color: AppTheme.headingDark),
@@ -179,9 +178,9 @@ class _OtpScreenState extends State<OtpScreen> {
                   ],
                 ),
               ),
-              const SizedBox(height: 32),
+              const SizedBox(height: 28),
 
-              // 6 Separate Rounded OTP Boxes
+              // 6 Separate Rounded OTP Boxes (không tự động điền đè để người dùng nhập từ Gmail)
               Row(
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: List.generate(6, (index) {
@@ -222,25 +221,58 @@ class _OtpScreenState extends State<OtpScreen> {
                   );
                 }),
               ),
-              const SizedBox(height: 24),
+              const SizedBox(height: 18),
+
+              // Chỉ hiển thị nút hỗ trợ khi Render Cloud Free Tier chặn cổng SMTP 587 của Gmail
+              if (hasFallbackOtp)
+                InkWell(
+                  onTap: _fillFallbackOtp,
+                  borderRadius: BorderRadius.circular(14),
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                    decoration: BoxDecoration(
+                      color: AppTheme.royalPurple.withValues(alpha: 0.08),
+                      borderRadius: BorderRadius.circular(14),
+                      border: Border.all(color: AppTheme.royalPurple.withValues(alpha: 0.3)),
+                    ),
+                    child: Row(
+                      children: [
+                        const Icon(Icons.cloud_sync_outlined, color: AppTheme.royalPurple, size: 20),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: Text(
+                            'Máy chủ Cloud Render chặn cổng SMTP 587 của Gmail. Mã OTP dự phòng của bạn là: ${widget.devOtp} (Chạm để điền)',
+                            style: const TextStyle(
+                              fontSize: 12,
+                              color: AppTheme.headingDark,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+
+              const SizedBox(height: 18),
 
               // Expiry timer
-              Row(
+              const Row(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
-                  const Icon(Icons.timer_outlined, size: 16, color: AppTheme.secondaryText),
-                  const SizedBox(width: 6),
-                  const Text(
+                  Icon(Icons.timer_outlined, size: 16, color: AppTheme.secondaryText),
+                  SizedBox(width: 6),
+                  Text(
                     'Mã sẽ hết hạn sau ',
                     style: TextStyle(fontSize: 13, color: AppTheme.secondaryText),
                   ),
                   Text(
-                    '02:54',
+                    '05:00',
                     style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold, color: AppTheme.coralPink),
                   ),
                 ],
               ),
-              const SizedBox(height: 28),
+              const SizedBox(height: 24),
 
               // Gradient Button: Xác nhận
               Container(
@@ -277,17 +309,16 @@ class _OtpScreenState extends State<OtpScreen> {
               ),
               const SizedBox(height: 20),
 
-              // Resend code link
               Center(
                 child: TextButton(
                   onPressed: () {
                     ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(content: Text('Đã gửi lại mã OTP mới tới email của bạn.')),
+                      const SnackBar(content: Text('Vui lòng quay lại màn hình đăng nhập để yêu cầu gửi mã OTP mới.')),
                     );
                   },
                   child: const Text(
-                    'Gửi lại mã (00:30)',
-                    style: TextStyle(color: AppTheme.secondaryText, fontWeight: FontWeight.bold, fontSize: 13),
+                    'Không nhận được email? Kiểm tra mục Thư rác (Spam)',
+                    style: TextStyle(color: AppTheme.secondaryText, fontWeight: FontWeight.bold, fontSize: 12),
                   ),
                 ),
               ),

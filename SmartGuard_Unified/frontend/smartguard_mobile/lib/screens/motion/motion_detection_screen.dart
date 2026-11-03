@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_spinkit/flutter_spinkit.dart';
 import 'package:sensors_plus/sensors_plus.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import '../../core/api_client.dart';
 import '../../core/app_theme.dart';
 import '../../services/sound_classifier_service.dart';
 import '../../services/sensor_fusion_service.dart';
@@ -31,6 +32,9 @@ class _MotionDetectionScreenState extends State<MotionDetectionScreen>
   String _currentSoundLabel = 'Silence';
   double _fusedScore = 0.0;
   AlertSeverity _severity = AlertSeverity.low;
+
+  String _activeDeviceId = '';
+  String _activeDeviceName = 'Thiết bị cảm biến';
 
   final List<_MotionEvent> _eventHistory = [];
 
@@ -64,6 +68,25 @@ class _MotionDetectionScreenState extends State<MotionDetectionScreen>
     _fusion = SensorFusionService();
     _sound = SoundClassifierService();
     _loadPrefs();
+    _loadActiveDevice();
+  }
+
+  Future<void> _loadActiveDevice() async {
+    try {
+      final list = await ApiClient.request('GET', '/api/devices') as List<dynamic>;
+      if (list.isNotEmpty && mounted) {
+        final firstArmed = list.firstWhere(
+          (d) => d['isArmed'] == true,
+          orElse: () => list.first,
+        );
+        setState(() {
+          _activeDeviceId = firstArmed['id']?.toString() ?? '';
+          _activeDeviceName = firstArmed['name']?.toString() ?? 'Thiết bị cảm biến';
+        });
+      }
+    } catch (_) {
+      // Offline hoặc chưa đăng nhập -> vẫn chạy cảnh báo local bình thường
+    }
   }
 
   @override
@@ -98,6 +121,7 @@ class _MotionDetectionScreenState extends State<MotionDetectionScreen>
 
   // ─── Monitoring ────────────────────────────────────────────────────────────
   Future<void> _startMonitoring() async {
+    await _loadActiveDevice();
     _fusion.motionThreshold = _motionSensitivity;
     _fusion.triggerThreshold = _fusionThreshold;
     _sound.confidenceThreshold = _soundThreshold;
@@ -125,6 +149,11 @@ class _MotionDetectionScreenState extends State<MotionDetectionScreen>
 
       if (r.level == AlertSeverity.high || r.level == AlertSeverity.critical) {
         _recordEvent(r);
+        AlertOrchestrator.triggerFullAlert(
+          fusion: r,
+          deviceId: _activeDeviceId,
+          deviceName: _activeDeviceName,
+        );
       }
     });
 
@@ -143,18 +172,43 @@ class _MotionDetectionScreenState extends State<MotionDetectionScreen>
     _fusionSub = null;
     _soundSub = null;
     _ampSub = null;
+    _rawAccelSub = null;
     _fusion.stop();
     _sound.stop();
     _waveTimer?.cancel();
+    AlertOrchestrator.stopAllAlarms();
     ForegroundServiceController.stopService();
+    if (mounted) {
+      setState(() {
+        _currentMotionScore = 0.0;
+        _currentSoundScore = 0.0;
+        _currentSoundLabel = 'Silence';
+        _fusedScore = 0.0;
+        _severity = AlertSeverity.low;
+      });
+    }
   }
 
   void _toggleMonitoring() {
     setState(() => _isMonitoringActive = !_isMonitoringActive);
     if (_isMonitoringActive) {
       _startMonitoring();
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('🛡️ Đã BẬT cảm biến chuyển động & âm thanh AI!'),
+          backgroundColor: AppTheme.statusArmed,
+          duration: Duration(seconds: 2),
+        ),
+      );
     } else {
       _stopMonitoring();
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('🔕 Đã TẮT cảm biến & dừng mọi còi cảnh báo!'),
+          backgroundColor: AppTheme.statusWarning,
+          duration: Duration(seconds: 2),
+        ),
+      );
     }
     _savePrefs();
   }
@@ -199,7 +253,7 @@ class _MotionDetectionScreenState extends State<MotionDetectionScreen>
           : AppBar(
               title: const Text('Phát hiện chuyển động'),
               backgroundColor: AppTheme.creamBg,
-              leading: BackButton(color: AppTheme.headingDark),
+              leading: const BackButton(color: AppTheme.headingDark),
             ),
       body: SingleChildScrollView(
         padding: const EdgeInsets.fromLTRB(16, 16, 16, 32),
@@ -312,9 +366,9 @@ class _MotionDetectionScreenState extends State<MotionDetectionScreen>
                 const Icon(Icons.sensors, size: 48, color: AppTheme.coralPink),
           ),
           const SizedBox(width: 12),
-          Column(
+          const Column(
             crossAxisAlignment: CrossAxisAlignment.start,
-            children: const [
+            children: [
               Text(
                 'Phát hiện chuyển động',
                 style: TextStyle(
@@ -391,10 +445,30 @@ class _MotionDetectionScreenState extends State<MotionDetectionScreen>
               ],
             ),
           ),
+          IconButton(
+            tooltip: 'Tắt còi cảnh báo ngay',
+            onPressed: () async {
+              await AlertOrchestrator.stopAllAlarms();
+              if (mounted) {
+                setState(() {
+                  _severity = AlertSeverity.low;
+                  _fusedScore = 0.0;
+                });
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(
+                    content: Text('🔕 Đã tắt ngay còi báo động và rung!'),
+                    backgroundColor: AppTheme.statusArmed,
+                    duration: Duration(seconds: 2),
+                  ),
+                );
+              }
+            },
+            icon: const Icon(Icons.volume_off_rounded, color: AppTheme.statusAlarm),
+          ),
           Switch.adaptive(
             value: _isMonitoringActive,
             onChanged: (_) => _toggleMonitoring(),
-            activeColor: AppTheme.coralPink,
+            activeTrackColor: AppTheme.coralPink,
           ),
         ],
       ),

@@ -47,20 +47,16 @@ class AuthService {
     final username = response['username']?.toString() ?? '';
     final role = response['role']?.toString() ?? 'Owner';
 
-    await SessionManager.saveSession(
-      token: token,
-      userId: userId,
-      email: email,
-      username: username,
-      role: role,
-    );
-
-    return UserModel(
+    final user = UserModel(
       id: userId,
       email: email,
       username: username,
       role: role,
     );
+
+    await SessionManager.saveSession(token, user);
+
+    return user;
   }
 
   static Future<bool> canUseBiometric() async {

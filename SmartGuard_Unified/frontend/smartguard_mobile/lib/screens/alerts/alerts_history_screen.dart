@@ -6,6 +6,7 @@ import '../../core/api_client.dart';
 import '../../core/app_config.dart';
 import '../../core/app_theme.dart';
 import '../../models/models.dart';
+import '../../services/sensor_fusion_service.dart';
 
 class AlertsHistoryScreen extends StatefulWidget {
   final bool isTab;
@@ -100,6 +101,9 @@ class AlertsHistoryScreenState extends State<AlertsHistoryScreen> {
   }
 
   Future<void> _acknowledgeAlert(String id, String action) async {
+    if (action != 'ConfirmedStranger') {
+      await AlertOrchestrator.stopAllAlarms();
+    }
     try {
       await ApiClient.request(
         'POST',
@@ -189,8 +193,10 @@ class AlertsHistoryScreenState extends State<AlertsHistoryScreen> {
                 ClipRRect(
                   borderRadius: BorderRadius.circular(12),
                   child: Image.network(
-                    '${AppConfig.baseUrl}${alert.imageUrl}',
-                    height: 180,
+                    alert.imageUrl!.startsWith('http')
+                        ? alert.imageUrl!
+                        : '${AppConfig.baseUrl}${alert.imageUrl}',
+                    height: 210,
                     width: double.infinity,
                     fit: BoxFit.cover,
                     errorBuilder: (_, __, ___) => Container(
@@ -200,7 +206,7 @@ class AlertsHistoryScreenState extends State<AlertsHistoryScreen> {
                         borderRadius: BorderRadius.circular(12),
                       ),
                       child: const Center(
-                        child: Text('Không thể tải ảnh bằng chứng'),
+                        child: Text('Ảnh này không còn lưu trên máy chủ Cloud'),
                       ),
                     ),
                   ),

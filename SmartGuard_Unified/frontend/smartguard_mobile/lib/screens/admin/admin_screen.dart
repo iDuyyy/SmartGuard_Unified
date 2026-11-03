@@ -180,6 +180,44 @@ class _AdminScreenState extends State<AdminScreen>
     }
   }
 
+  // Đổi nhanh vai trò Admin <-> User cho tài khoản đã tồn tại (không cần mật khẩu)
+  Future<void> _quickToggleUserRole(UserModel user) async {
+    final isCurrentlyAdmin = user.role.toLowerCase() == 'admin';
+    final nextRole = isCurrentlyAdmin ? 'Owner' : 'Admin';
+    try {
+      await ApiClient.request(
+        'PUT',
+        '/api/admin/users/${user.id}',
+        body: {
+          'username': user.username,
+          'email': user.email,
+          'role': nextRole,
+          'isLocked': user.isLocked,
+        },
+      );
+      _loadAdminData();
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              'Đã đổi quyền tài khoản ${user.username} thành ${nextRole == 'Admin' ? 'Quản trị (Admin)' : 'Người dùng (User)'} (không cần nhập mật khẩu)!',
+            ),
+            backgroundColor: AppTheme.statusArmed,
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Lỗi: $e'),
+            backgroundColor: AppTheme.statusAlarm,
+          ),
+        );
+      }
+    }
+  }
+
   // Thêm tài khoản mới (Admin hoặc User)
   Future<void> _showAddUserDialog() async {
     final formKey = GlobalKey<FormState>();
@@ -206,6 +244,18 @@ class _AdminScreenState extends State<AdminScreen>
                 mainAxisSize: MainAxisSize.min,
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
+                  Container(
+                    padding: const EdgeInsets.all(10),
+                    margin: const EdgeInsets.only(bottom: 12),
+                    decoration: BoxDecoration(
+                      color: AppTheme.primaryBlue.withValues(alpha: 0.08),
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    child: const Text(
+                      '💡 Mẹo: Biểu mẫu này dùng để TẠO MỚI một tài khoản chưa từng đăng ký (cần tạo mật khẩu ban đầu). Nếu chỉ muốn đổi quyền Admin/User cho tài khoản đã có, hãy chạm trực tiếp vào nhãn Admin/User trên danh sách bên ngoài!',
+                      style: TextStyle(fontSize: 12, color: AppTheme.textSecondary),
+                    ),
+                  ),
                   TextFormField(
                     controller: usernameCtrl,
                     decoration: const InputDecoration(
@@ -377,6 +427,18 @@ class _AdminScreenState extends State<AdminScreen>
                 mainAxisSize: MainAxisSize.min,
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
+                  Container(
+                    padding: const EdgeInsets.all(10),
+                    margin: const EdgeInsets.only(bottom: 12),
+                    decoration: BoxDecoration(
+                      color: AppTheme.primaryBlue.withValues(alpha: 0.08),
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    child: const Text(
+                      '💡 Mẹo: Biểu mẫu này dùng để TẠO MỚI một tài khoản chưa từng đăng ký (cần tạo mật khẩu ban đầu). Nếu chỉ muốn đổi quyền Admin/User cho tài khoản đã có, hãy chạm trực tiếp vào nhãn Admin/User trên danh sách bên ngoài!',
+                      style: TextStyle(fontSize: 12, color: AppTheme.textSecondary),
+                    ),
+                  ),
                   TextFormField(
                     controller: usernameCtrl,
                     decoration: const InputDecoration(
@@ -950,25 +1012,42 @@ class _AdminScreenState extends State<AdminScreen>
                         ),
                       ),
                       const SizedBox(width: 8),
-                      Container(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 8,
-                          vertical: 2,
-                        ),
-                        decoration: BoxDecoration(
-                          color: isAdmin
-                              ? const Color(0xFF7C3AED).withValues(alpha: 0.15)
-                              : AppTheme.primaryBlue.withValues(alpha: 0.15),
-                          borderRadius: BorderRadius.circular(6),
-                        ),
-                        child: Text(
-                          isAdmin ? 'Admin' : 'User',
-                          style: TextStyle(
-                            fontSize: 11,
-                            fontWeight: FontWeight.bold,
+                      InkWell(
+                        onTap: () => _quickToggleUserRole(user),
+                        borderRadius: BorderRadius.circular(6),
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 8,
+                            vertical: 2,
+                          ),
+                          decoration: BoxDecoration(
                             color: isAdmin
-                                ? const Color(0xFF7C3AED)
-                                : AppTheme.primaryBlue,
+                                ? const Color(0xFF7C3AED).withValues(alpha: 0.15)
+                                : AppTheme.primaryBlue.withValues(alpha: 0.15),
+                            borderRadius: BorderRadius.circular(6),
+                          ),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Text(
+                                isAdmin ? 'Admin' : 'User',
+                                style: TextStyle(
+                                  fontSize: 11,
+                                  fontWeight: FontWeight.bold,
+                                  color: isAdmin
+                                      ? const Color(0xFF7C3AED)
+                                      : AppTheme.primaryBlue,
+                                ),
+                              ),
+                              const SizedBox(width: 4),
+                              Icon(
+                                Icons.swap_horiz,
+                                size: 12,
+                                color: isAdmin
+                                    ? const Color(0xFF7C3AED)
+                                    : AppTheme.primaryBlue,
+                              ),
+                            ],
                           ),
                         ),
                       ),
@@ -1006,7 +1085,9 @@ class _AdminScreenState extends State<AdminScreen>
                   trailing: PopupMenuButton<String>(
                     icon: const Icon(Icons.more_vert),
                     onSelected: (value) {
-                      if (value == 'edit') {
+                      if (value == 'role') {
+                        _quickToggleUserRole(user);
+                      } else if (value == 'edit') {
                         _showEditUserDialog(user);
                       } else if (value == 'lock') {
                         _toggleUserLock(user);
@@ -1015,6 +1096,24 @@ class _AdminScreenState extends State<AdminScreen>
                       }
                     },
                     itemBuilder: (ctx) => [
+                      PopupMenuItem(
+                        value: 'role',
+                        child: Row(
+                          children: [
+                            const Icon(
+                              Icons.swap_horiz,
+                              size: 18,
+                              color: Color(0xFF7C3AED),
+                            ),
+                            const SizedBox(width: 8),
+                            Text(
+                              isAdmin
+                                  ? 'Đổi sang quyền User (không cần MK)'
+                                  : 'Cấp quyền Admin (không cần MK)',
+                            ),
+                          ],
+                        ),
+                      ),
                       const PopupMenuItem(
                         value: 'edit',
                         child: Row(

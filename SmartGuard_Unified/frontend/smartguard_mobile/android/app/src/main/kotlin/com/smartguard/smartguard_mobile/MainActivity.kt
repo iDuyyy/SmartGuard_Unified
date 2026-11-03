@@ -9,6 +9,7 @@ import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.os.PowerManager
+import android.telephony.SmsManager
 import android.provider.Settings
 import android.util.Log
 import androidx.core.app.ActivityCompat
@@ -63,8 +64,12 @@ class MainActivity : FlutterFragmentActivity() {
                     result.success(true)
                 }
                 "notifyAlarm" -> {
+                    val title = call.argument<String>("title") ?: "🚨 CẢNH BÁO XÂM NHẬP!"
+                    val message = call.argument<String>("message") ?: "SmartGuard phát hiện chuyển động bất thường."
                     val intent = Intent(applicationContext, SmartGuardForegroundService::class.java).apply {
                         action = SmartGuardForegroundService.ACTION_ALARM
+                        putExtra("extra_title", title)
+                        putExtra("extra_message", message)
                     }
                     try {
                         applicationContext.startService(intent)
@@ -101,6 +106,11 @@ class MainActivity : FlutterFragmentActivity() {
                         this, Manifest.permission.CALL_PHONE
                     ) == PackageManager.PERMISSION_GRANTED
                     result.success(hasPermission)
+                }
+                "sendEmergencySms" -> {
+                    val phoneNumber = call.argument<String>("phoneNumber") ?: ""
+                    val message = call.argument<String>("message") ?: "🚨 Cảnh báo SmartGuard!"
+                    result.success(sendEmergencySms(phoneNumber, message))
                 }
                 else -> result.notImplemented()
             }
@@ -211,6 +221,43 @@ class MainActivity : FlutterFragmentActivity() {
             true
         } catch (e: Exception) {
             Log.e(TAG, "Không thể mở trình gọi điện: ${e.message}")
+            false
+        }
+    }
+
+    /**
+     * Gửi tin nhắn SMS khẩn cấp (SmsManager) trực tiếp qua SIM
+     */
+    private fun sendEmergencySms(phoneNumber: String, message: String): Boolean {
+        val cleanNumber = phoneNumber.replace("[^0-9+]".toRegex(), "")
+        if (cleanNumber.isEmpty()) return false
+
+        val hasPermission = ContextCompat.checkSelfPermission(
+            this, Manifest.permission.SEND_SMS
+        ) == PackageManager.PERMISSION_GRANTED
+
+        if (!hasPermission) {
+            Log.w(TAG, "SEND_SMS chưa được cấp quyền.")
+            return false
+        }
+
+        return try {
+            val smsManager = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                applicationContext.getSystemService(SmsManager::class.java)
+            } else {
+                @Suppress("DEPRECATION")
+                SmsManager.getDefault()
+            }
+            val parts = smsManager.divideMessage(message)
+            if (parts.size > 1) {
+                smsManager.sendMultipartTextMessage(cleanNumber, null, parts, null, null)
+            } else {
+                smsManager.sendTextMessage(cleanNumber, null, message, null, null)
+            }
+            Log.i(TAG, "✉️ Đã gửi tin nhắn SMS khẩn cấp thành công tới: $cleanNumber")
+            true
+        } catch (e: Exception) {
+            Log.e(TAG, "Gửi SMS thất bại: ${e.message}")
             false
         }
     }

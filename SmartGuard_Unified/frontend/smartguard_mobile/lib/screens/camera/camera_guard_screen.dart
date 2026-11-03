@@ -16,6 +16,7 @@ import '../../core/app_theme.dart';
 import '../../models/models.dart';
 import '../../services/tts_service.dart';
 import '../../services/sensor_fusion_service.dart';
+import '../../services/sound_classifier_service.dart';
 import '../alerts/alerts_history_screen.dart';
 
 class CameraGuardScreen extends StatefulWidget {
@@ -44,6 +45,8 @@ class _CameraGuardScreenState extends State<CameraGuardScreen> with WidgetsBindi
   Timer? _alertPollTimer;
 
   StreamSubscription<AccelerometerEvent>? _sensorSubscription;
+  SoundClassifierService? _soundClassifier;
+  StreamSubscription<SoundClassificationResult>? _soundSub;
   final FaceDetector _faceDetector = FaceDetector(
     options: FaceDetectorOptions(
       enableContours: false,
@@ -83,6 +86,8 @@ class _CameraGuardScreenState extends State<CameraGuardScreen> with WidgetsBindi
     WidgetsBinding.instance.removeObserver(this);
     _alertPollTimer?.cancel();
     _sensorSubscription?.cancel();
+    _soundSub?.cancel();
+    _soundClassifier?.dispose();
     _cameraController?.dispose();
     _faceDetector.close();
     TtsService.stop();
@@ -114,6 +119,29 @@ class _CameraGuardScreenState extends State<CameraGuardScreen> with WidgetsBindi
     await _loadRecentAlerts();
     await _initCamera();
     _initAccelerometer();
+    _initSoundClassifier();
+  }
+
+  Future<void> _initSoundClassifier() async {
+    try {
+      _soundClassifier = SoundClassifierService();
+      final ready = await _soundClassifier!.initialize();
+      if (ready && mounted && _isGuardEnabled) {
+        await _soundClassifier!.start();
+        _soundSub = _soundClassifier!.resultStream.listen((res) {
+          if (!_isGuardEnabled || _isAlarmActive) return;
+          if (_snoozeUntil != null && DateTime.now().isBefore(_snoozeUntil!)) return;
+
+          // Nếu phát hiện âm thanh bất thường vượt ngưỡng hoặc các nhãn khẩn cấp
+          if (res.isAbnormal && res.riskScore >= 0.65) {
+            final reason = 'TIENG_DONG_${res.label.toUpperCase().replaceAll(RegExp(r'[^A-Z0-9]'), '_')}';
+            _handleSecurityTrigger(reason, res.riskScore * 10);
+          }
+        });
+      }
+    } catch (e) {
+      debugPrint('[CameraGuard] Lỗi khởi tạo AI âm thanh: $e');
+    }
   }
 
   Future<void> _toggleGuardMonitoring(bool enabled) async {
@@ -134,6 +162,9 @@ class _CameraGuardScreenState extends State<CameraGuardScreen> with WidgetsBindi
 
     if (!enabled) {
       await AlertOrchestrator.stopAllAlarms();
+      _soundClassifier?.stop();
+    } else {
+      _soundClassifier?.start();
     }
 
     if (mounted) {
@@ -399,7 +430,14 @@ class _CameraGuardScreenState extends State<CameraGuardScreen> with WidgetsBindi
     if (upper.contains('NGUOI') || upper.contains('PERSON')) return 'Phát hiện người lạ trước camera';
     if (upper.contains('RUNG_LAC') || upper.contains('SHAKE')) return 'Phát hiện rung lắc thiết bị';
     if (upper.contains('CHUYEN_DONG') || upper.contains('MOTION')) return 'Phát hiện chuyển động';
-    if (upper.contains('TIENG_DONG') || upper.contains('NOISE') || upper.contains('SOUND')) return 'Âm thanh bất thường';
+    if (upper.contains('TIENG_DONG') || upper.contains('NOISE') || upper.contains('SOUND')) {
+      if (upper.contains('GLASS') || upper.contains('SHATTER')) return 'Âm thanh: Vỡ kính';
+      if (upper.contains('SCREAM')) return 'Âm thanh: Tiếng la hét';
+      if (upper.contains('EXPLOSION') || upper.contains('GUNSHOT') || upper.contains('GUNFIRE')) return 'Âm thanh: Tiếng nổ / vũ khí';
+      if (upper.contains('ALARM') || upper.contains('SIREN')) return 'Âm thanh: Còi báo động';
+      if (upper.contains('KNOCK') || upper.contains('DOOR') || upper.contains('SLAM')) return 'Âm thanh: Gõ cửa dồn dập';
+      return 'Âm thanh bất thường';
+    }
     return code;
   }
 

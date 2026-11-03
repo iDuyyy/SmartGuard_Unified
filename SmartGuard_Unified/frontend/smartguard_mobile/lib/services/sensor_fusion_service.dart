@@ -275,8 +275,8 @@ class AlertOrchestrator {
         severity: fusion.level == AlertSeverity.critical ? 'Critical' : 'Warning',
       );
 
-      // 5. Gọi điện khẩn cấp
-      await _callEmergencyContacts(fusion: fusion);
+      // 5. Gọi điện khẩn cấp & gửi SMS dự phòng
+      await _callEmergencyContacts(fusion: fusion, deviceName: deviceName);
 
     } catch (e) {
       debugPrint('[AlertOrchestrator] Error: $e');
@@ -345,12 +345,22 @@ class AlertOrchestrator {
 
   static Future<void> _callEmergencyContacts({
     required FusionResult fusion,
+    String? deviceName,
   }) async {
     try {
       final primary = await EmergencyService.getPrimaryCallContact();
       if (primary != null && primary.phone.trim().isNotEmpty) {
-        await ForegroundServiceController.callEmergency(
-          primary.phone.trim(),
+        final phone = primary.phone.trim();
+        debugPrint('[AlertOrchestrator] Khởi động cuộc gọi SIM khẩn cấp tới: $phone (${primary.name})');
+        await ForegroundServiceController.callEmergency(phone);
+
+        // Gửi SMS thông báo dự phòng qua SIM
+        final now = DateTime.now();
+        final timeStr = '${now.hour.toString().padLeft(2, '0')}:${now.minute.toString().padLeft(2, '0')}';
+        final smsMsg = '🚨 SMARTGUARD SOS [$timeStr]: Phát hiện ${fusion.reason} tại ${deviceName ?? "nhà bạn"}. Vui lòng kiểm tra camera!';
+        await ForegroundServiceController.sendEmergencySms(
+          phoneNumber: phone,
+          message: smsMsg,
         );
       }
     } catch (e) {

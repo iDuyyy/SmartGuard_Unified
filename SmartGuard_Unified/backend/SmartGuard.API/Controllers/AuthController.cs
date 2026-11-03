@@ -121,7 +121,7 @@ namespace SmartGuard.API.Controllers
                     email = MaskEmail(user.Email),
                     message = emailSent
                         ? "Mã xác thực OTP đã được gửi đến email của bạn. Vui lòng kiểm tra hộp thư (hoặc mục Spam)."
-                        : "Máy chủ Cloud chưa mở cổng gửi email trực tiếp. Vui lòng sử dụng mã OTP dự phòng bên dưới để hoàn tất đăng nhập.",
+                        : "Hệ thống đã tạo mã xác thực 2 lớp cho phiên đăng nhập.",
                     expiresInSeconds = 300,
                     devOtp = emailSent ? null : otpCode
                 });

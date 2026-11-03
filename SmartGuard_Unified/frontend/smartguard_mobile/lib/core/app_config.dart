@@ -2,7 +2,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 class AppConfig {
   static const String defaultTunnelUrl =
-      'https://2xlv8268-44321.asse.devtunnels.ms';
+      'https://smartguard-unified.onrender.com/';
   static const String defaultLanUrl = 'http://192.168.1.100:5235';
   static const String emulatorUrl = 'http://10.0.2.2:5235';
   static const String localhostUrl = 'https://localhost:44321';
@@ -38,7 +38,12 @@ class AppConfig {
     while (trimmed.endsWith('/')) {
       trimmed = trimmed.substring(0, trimmed.length - 1);
     }
-    for (final suffix in ['/api/status', '/api', '/swagger/index.html', '/swagger']) {
+    for (final suffix in [
+      '/api/status',
+      '/api',
+      '/swagger/index.html',
+      '/swagger',
+    ]) {
       if (trimmed.toLowerCase().endsWith(suffix)) {
         trimmed = trimmed.substring(0, trimmed.length - suffix.length);
       }
@@ -76,6 +81,16 @@ class AppConfig {
     } catch (_) {
       _activeBaseUrl = renderUrl;
     }
+      final saved = prefs.getString(_prefKeyBaseUrl);
+      if (saved != null &&
+          saved.trim().isNotEmpty &&
+          !saved.contains('192.168.2.6')) {
+        _activeBaseUrl = normalizeUrl(saved);
+      } else {
+        _activeBaseUrl = localhostUrl;
+        await prefs.setString(_prefKeyBaseUrl, _activeBaseUrl);
+      }
+    } catch (_) {}
   }
 
   static Future<void> setBaseUrl(String url) async {

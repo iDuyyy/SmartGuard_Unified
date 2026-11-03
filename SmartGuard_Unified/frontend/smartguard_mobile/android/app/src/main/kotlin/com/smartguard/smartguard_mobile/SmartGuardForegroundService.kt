@@ -37,6 +37,8 @@ class SmartGuardForegroundService : Service() {
         const val ACTION_STOP = "com.smartguard.STOP_GUARD"
         const val ACTION_ALARM = "com.smartguard.ALARM_TRIGGERED"
         const val FLUTTER_CHANNEL = "com.smartguard/foreground"
+        const val EXTRA_TITLE = "extra_title"
+        const val EXTRA_MESSAGE = "extra_message"
 
         fun startService(context: Context) {
             val intent = Intent(context, SmartGuardForegroundService::class.java).apply {
@@ -77,7 +79,10 @@ class SmartGuardForegroundService : Service() {
             }
             ACTION_ALARM -> {
                 // Cập nhật notification khi có báo động
-                updateNotificationAlarm()
+                updateNotificationAlarm(
+                    intent?.getStringExtra(EXTRA_TITLE),
+                    intent?.getStringExtra(EXTRA_MESSAGE)
+                )
             }
             else -> {
                 // ACTION_START hoặc null → Khởi động
@@ -162,11 +167,25 @@ class SmartGuardForegroundService : Service() {
             .build()
     }
 
-    private fun updateNotificationAlarm() {
+    private fun updateNotificationAlarm(title: String? = null, message: String? = null) {
         val notifManager = getSystemService(NotificationManager::class.java)
+        val openIntent = PendingIntent.getActivity(
+            this,
+            2,
+            Intent(this, MainActivity::class.java).apply {
+                flags = Intent.FLAG_ACTIVITY_SINGLE_TOP
+            },
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+        val text = if (message.isNullOrBlank())
+            "SmartGuard phát hiện chuyển động bất thường. Nhấn để xem camera." else message
         val alarmNotif = NotificationCompat.Builder(this, CHANNEL_ID)
-            .setContentTitle("🚨 CẢNH BÁO XÂM NHẬP!")
-            .setContentText("SmartGuard phát hiện chuyển động bất thường. Nhấn để xem camera.")
+            .setContentTitle(if (title.isNullOrBlank()) "🚨 CẢNH BÁO XÂM NHẬP!" else title)
+            .setContentText(text)
+            .setStyle(NotificationCompat.BigTextStyle().bigText(text))
+            .setContentIntent(openIntent)
+            .setWhen(System.currentTimeMillis())
+            .setShowWhen(true)
             .setSmallIcon(android.R.drawable.ic_dialog_alert)
             .setOngoing(true)
             .setPriority(NotificationCompat.PRIORITY_MAX)

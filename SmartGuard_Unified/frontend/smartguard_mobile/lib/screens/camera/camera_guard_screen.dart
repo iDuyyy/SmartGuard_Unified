@@ -16,6 +16,7 @@ import '../../core/app_theme.dart';
 import '../../models/models.dart';
 import '../../services/tts_service.dart';
 import '../../services/sensor_fusion_service.dart';
+import '../../services/sound_classifier_service.dart';
 import '../alerts/alerts_history_screen.dart';
 
 class CameraGuardScreen extends StatefulWidget {
@@ -44,6 +45,12 @@ class _CameraGuardScreenState extends State<CameraGuardScreen> with WidgetsBindi
   Timer? _alertPollTimer;
 
   StreamSubscription<AccelerometerEvent>? _sensorSubscription;
+
+  // Sensor Fusion: Rung (accelerometer) + Âm thanh (YAMNet) + Hình ảnh (ML Kit)
+  final SensorFusionService _fusion = SensorFusionService();
+  final SoundClassifierService _sound = SoundClassifierService();
+  StreamSubscription<FusionResult>? _fusionSub;
+  bool _fusionRunning = false;
   final FaceDetector _faceDetector = FaceDetector(
     options: FaceDetectorOptions(
       enableContours: false,
@@ -83,6 +90,9 @@ class _CameraGuardScreenState extends State<CameraGuardScreen> with WidgetsBindi
     WidgetsBinding.instance.removeObserver(this);
     _alertPollTimer?.cancel();
     _sensorSubscription?.cancel();
+    _fusionSub?.cancel();
+    _fusion.dispose();
+    _sound.dispose();
     _cameraController?.dispose();
     _faceDetector.close();
     TtsService.stop();
@@ -113,7 +123,7 @@ class _CameraGuardScreenState extends State<CameraGuardScreen> with WidgetsBindi
     await _loadKnownPersons();
     await _loadRecentAlerts();
     await _initCamera();
-    _initAccelerometer();
+    if (_isGuardEnabled) await _startFusion();
   }
 
   Future<void> _toggleGuardMonitoring(bool enabled) async {
@@ -133,7 +143,10 @@ class _CameraGuardScreenState extends State<CameraGuardScreen> with WidgetsBindi
     await prefs.setBool('sg_guard_monitoring_enabled', enabled);
 
     if (!enabled) {
+      await _stopFusion();
       await AlertOrchestrator.stopAllAlarms();
+    } else {
+      await _startFusion();
     }
 
     if (mounted) {
@@ -319,19 +332,53 @@ class _CameraGuardScreenState extends State<CameraGuardScreen> with WidgetsBindi
     } catch (_) {}
   }
 
-  void _initAccelerometer() {
-    _sensorSubscription = accelerometerEventStream().listen((event) {
-      if (!_isGuardEnabled) return;
-      if (_snoozeUntil != null && DateTime.now().isBefore(_snoozeUntil!)) return;
-      if (_hasPersonInFrame) return;
+  /// Khởi động Sensor Fusion: accelerometer (đã khử trọng lực) + YAMNet + vision.
+  Future<void> _startFusion() async {
+    if (_fusionRunning) return;
+    _fusionRunning = true;
 
-      final double magnitude = sqrt(event.x * event.x + event.y * event.y + event.z * event.z);
-      final double delta = (magnitude - 9.8).abs();
+    final prefs = await SharedPreferences.getInstance();
+    _fusion.motionThreshold =
+        prefs.getDouble('sg_motion_sensitivity') ?? AppConfig.defaultMotionThreshold;
+    _fusion.triggerThreshold = prefs.getDouble('sg_fusion_threshold') ?? 0.65;
+    _sound.confidenceThreshold = prefs.getDouble('sg_sound_threshold') ?? 0.65;
 
-      if (delta > 3.8) {
-        _handleSecurityTrigger('PHAT_HIEN_RUNG_LAC', delta);
-      }
-    });
+    _fusion.attachSoundClassifier(_sound);
+    _fusionSub?.cancel();
+    _fusionSub = _fusion.fusionStream.listen(_onFusionResult);
+
+    _fusion.start();
+    // Micro có thể đang bị màn Motion Detection chiếm — lỗi được xử lý bên trong.
+    await _sound.start();
+  }
+
+  Future<void> _stopFusion() async {
+    _fusionRunning = false;
+    await _fusionSub?.cancel();
+    _fusionSub = null;
+    _fusion.stop();
+    _fusion.updateVisionScore(0.0);
+    await _sound.stop();
+  }
+
+  void _onFusionResult(FusionResult r) {
+    if (!_isGuardEnabled) return;
+    if (_snoozeUntil != null && DateTime.now().isBefore(_snoozeUntil!)) return;
+    if (r.level != AlertSeverity.high && r.level != AlertSeverity.critical) return;
+
+    // Mã lý do theo nguồn tín hiệu mạnh nhất (dùng cho TTS + backend)
+    final m = r.breakdown['motion'] ?? 0.0;
+    final s = r.breakdown['sound'] ?? 0.0;
+    final v = r.breakdown['vision'] ?? 0.0;
+    final String code;
+    if (v >= m && v >= s) {
+      code = 'PHAT_HIEN_NGUOI_LA';
+    } else if (s >= m) {
+      code = 'TIENG_DONG';
+    } else {
+      code = 'PHAT_HIEN_RUNG_LAC';
+    }
+    _handleSecurityTrigger(code, r.score, fusion: r);
   }
 
   Future<void> _processCameraFrame(CameraImage image) async {
@@ -363,25 +410,13 @@ class _CameraGuardScreenState extends State<CameraGuardScreen> with WidgetsBindi
 
       if (faces.isNotEmpty) {
         _hasPersonInFrame = true;
-        if (_autoDismissForKnownPersons && _knownPersons.isNotEmpty) {
-          final now = DateTime.now();
-          if (_lastKnownPersonNotice == null || now.difference(_lastKnownPersonNotice!).inSeconds > 10) {
-            _lastKnownPersonNotice = now;
-            if (!_isMuted) {
-              TtsService.playWarningVoice('NGUOI_QUEN');
-            }
-          }
-          if (mounted) {
-            setState(() {
-              _statusText = 'Nhận diện người quen (${_knownPersons.first.name})';
-              _statusColor = AppTheme.statusArmed;
-            });
-          }
-        } else {
-          _handleSecurityTrigger('PHAT_HIEN_NGUOI_LA', faces.length.toDouble());
-        }
+        // ML Kit chỉ PHÁT HIỆN khuôn mặt, không nhận dạng danh tính → mọi khuôn mặt
+        // được coi là người lạ. Người quen được xác nhận qua nút "Người quen" /
+        // Discord (tạm dừng 3 phút, xem _dismissAlarm).
+        _fusion.updateVisionScore(1.0);
       } else {
         _hasPersonInFrame = false;
+        _fusion.updateVisionScore(0.0);
         if (mounted && !_isAlarmActive && _isGuardEnabled) {
           setState(() {
             _statusText = 'Đang canh gác trực tiếp';
@@ -403,7 +438,11 @@ class _CameraGuardScreenState extends State<CameraGuardScreen> with WidgetsBindi
     return code;
   }
 
-  Future<void> _handleSecurityTrigger(String reason, double score) async {
+  Future<void> _handleSecurityTrigger(
+    String reason,
+    double score, {
+    FusionResult? fusion,
+  }) async {
     if (!_isGuardEnabled) return;
     final now = DateTime.now();
     if (_snoozeUntil != null && now.isBefore(_snoozeUntil!)) return;
@@ -479,13 +518,16 @@ class _CameraGuardScreenState extends State<CameraGuardScreen> with WidgetsBindi
     await _loadRecentAlerts();
 
     // 4. Gọi điện khẩn cấp tới người thân ưu tiên số 1
+    final effectiveFusion = fusion ??
+        FusionResult(
+          score: (score > 1.0 ? score / 10 : score).clamp(0.0, 1.0),
+          level: AlertSeverity.high,
+          reason: _formatReason(reason),
+          breakdown: {'motion': 0.0, 'sound': 0.0, 'vision': 1.0},
+        );
+
     AlertOrchestrator.triggerFullAlert(
-      fusion: FusionResult(
-        score: (score / 10).clamp(0.0, 1.0),
-        level: AlertSeverity.high,
-        reason: _formatReason(reason),
-        breakdown: {'motion': score / 10, 'sound': 0.0, 'vision': 1.0},
-      ),
+      fusion: effectiveFusion,
       deviceId: devId,
       deviceName: devName,
       postToServer: false,

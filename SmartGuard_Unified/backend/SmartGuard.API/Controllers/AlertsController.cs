@@ -87,19 +87,19 @@ namespace SmartGuard.API.Controllers
         public async Task<IActionResult> TriggerAlert([FromBody] TriggerAlertDto dto)
         {
             var device = await _db.Devices.Include(d => d.Zone).FirstOrDefaultAsync(d => d.Id == dto.DeviceId);
-            if (device == null && CurrentUserId != Guid.Empty)
+            if (device == null)
             {
-                // Tự động lấy thiết bị đầu tiên của người dùng hoặc khởi tạo thiết bị mặc định nếu chưa có
-                device = await _db.Devices.Include(d => d.Zone)
-                    .FirstOrDefaultAsync(d => d.OwnerId == CurrentUserId);
-
+                // Tự động tìm thiết bị bất kỳ trong CSDL hoặc khởi tạo thiết bị mới
+                device = await _db.Devices.Include(d => d.Zone).FirstOrDefaultAsync();
                 if (device == null)
                 {
+                    var defaultOwner = await _db.Users.FirstOrDefaultAsync();
+                    var ownerId = defaultOwner?.Id ?? (CurrentUserId != Guid.Empty ? CurrentUserId : Guid.NewGuid());
                     device = new GuardDevice
                     {
-                        OwnerId = CurrentUserId,
+                        OwnerId = ownerId,
                         Name = "Camera Điện Thoại SmartGuard",
-                        Description = "Loại: camera | Vị trí: Khu vực chính",
+                        Description = "Thiết bị giám sát an ninh di động",
                         IsArmed = true,
                         NoiseThreshold = 70.0,
                         MotionThreshold = 3.5,
@@ -111,16 +111,16 @@ namespace SmartGuard.API.Controllers
                 }
             }
 
-            if (device == null) return NotFound(new { message = "Thiết bị không tồn tại." });
-
-            if (!device.IsArmed)
-            {
-                _logger.LogInformation("Thiết bị {DeviceName} đang ở trạng thái Tắt cảnh giác (Disarmed). Bỏ qua cảnh báo.", device.Name);
-                return Ok(new { message = "Thiết bị đang tắt cảnh giác. Cảnh báo không phát động.", suppressed = true });
-            }
-
             var triggerReason = string.IsNullOrWhiteSpace(dto.TriggerReason) ? "CHUYEN_DONG" : dto.TriggerReason.Trim();
             var severity = string.IsNullOrWhiteSpace(dto.Severity) ? "Warning" : dto.Severity.Trim();
+
+            // Nếu nhận được tín hiệu cảnh báo chủ động từ client, đảm bảo thiết bị ở trạng thái Armed
+            if (!device.IsArmed)
+            {
+                device.IsArmed = true;
+                device.LastSeenAt = DateTime.UtcNow;
+                await _db.SaveChangesAsync();
+            }
 
             // Đánh giá kịch bản thích ứng (Smart Adaptive Security Evaluation)
             var evaluation = await _ruleEngine.EvaluateAlertAsync(device, triggerReason, dto.TriggerScore, severity);

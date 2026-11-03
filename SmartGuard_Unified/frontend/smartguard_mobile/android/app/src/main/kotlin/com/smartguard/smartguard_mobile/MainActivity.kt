@@ -10,6 +10,7 @@ import android.os.Build
 import android.os.Bundle
 import android.os.PowerManager
 import android.provider.Settings
+import android.telephony.SmsManager
 import android.util.Log
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
@@ -36,6 +37,7 @@ class MainActivity : FlutterFragmentActivity() {
 
         const val REQ_NOTIFICATIONS = 1001
         const val REQ_CALL_PHONE = 1002
+        const val REQ_SEND_SMS = 1003
     }
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
@@ -65,6 +67,8 @@ class MainActivity : FlutterFragmentActivity() {
                 "notifyAlarm" -> {
                     val intent = Intent(applicationContext, SmartGuardForegroundService::class.java).apply {
                         action = SmartGuardForegroundService.ACTION_ALARM
+                        putExtra(SmartGuardForegroundService.EXTRA_TITLE, call.argument<String>("title"))
+                        putExtra(SmartGuardForegroundService.EXTRA_MESSAGE, call.argument<String>("message"))
                     }
                     try {
                         applicationContext.startService(intent)
@@ -91,6 +95,11 @@ class MainActivity : FlutterFragmentActivity() {
                         return@setMethodCallHandler
                     }
                     result.success(makePhoneCall(phoneNumber))
+                }
+                "sendSms" -> {
+                    val phoneNumber = call.argument<String>("phoneNumber") ?: ""
+                    val message = call.argument<String>("message") ?: ""
+                    result.success(sendEmergencySms(phoneNumber, message))
                 }
                 "requestCallPermission" -> {
                     requestCallPermissionIfNeeded()
@@ -211,6 +220,43 @@ class MainActivity : FlutterFragmentActivity() {
             true
         } catch (e: Exception) {
             Log.e(TAG, "Không thể mở trình gọi điện: ${e.message}")
+            false
+        }
+    }
+
+    /**
+     * Cấp 3 fallback: gửi SMS khẩn cấp qua SmsManager (chia nhỏ nếu tin dài).
+     * Trả về false nếu chưa được cấp quyền SEND_SMS hoặc gửi thất bại.
+     */
+    private fun sendEmergencySms(phoneNumber: String, message: String): Boolean {
+        val cleanNumber = phoneNumber.replace("[^0-9+]".toRegex(), "")
+        if (cleanNumber.isEmpty() || message.isBlank()) return false
+
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.SEND_SMS)
+            != PackageManager.PERMISSION_GRANTED
+        ) {
+            Log.w(TAG, "SEND_SMS chưa được cấp – không thể gửi SMS khẩn cấp.")
+            ActivityCompat.requestPermissions(this, arrayOf(Manifest.permission.SEND_SMS), REQ_SEND_SMS)
+            return false
+        }
+
+        return try {
+            val smsManager: SmsManager = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                getSystemService(SmsManager::class.java)
+            } else {
+                @Suppress("DEPRECATION")
+                SmsManager.getDefault()
+            }
+            val parts = smsManager.divideMessage(message)
+            if (parts.size > 1) {
+                smsManager.sendMultipartTextMessage(cleanNumber, null, parts, null, null)
+            } else {
+                smsManager.sendTextMessage(cleanNumber, null, message, null, null)
+            }
+            Log.i(TAG, "✉️ Đã gửi SMS khẩn cấp tới $cleanNumber")
+            true
+        } catch (e: Exception) {
+            Log.e(TAG, "Gửi SMS thất bại: ${e.message}")
             false
         }
     }

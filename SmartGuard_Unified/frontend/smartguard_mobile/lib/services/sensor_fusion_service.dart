@@ -12,6 +12,7 @@ import '../services/foreground_service_controller.dart';
 import '../services/sound_classifier_service.dart';
 import '../services/tts_service.dart';
 import '../core/api_client.dart';
+import '../models/models.dart';
 
 // ─── Alert Severity ────────────────────────────────────────────────────────
 enum AlertSeverity { low, medium, high, critical }
@@ -69,7 +70,20 @@ class SensorFusionService {
   Stream<FusionResult> get fusionStream => _fusionController.stream;
 
   bool _isRunning = false;
-  double _lastAccelMagnitude = 9.8; // gravity baseline
+
+  // Đường cơ sở trọng lực (lọc thông thấp) — loại bỏ 9.81 m/s² tĩnh
+  double _gravityBaseline = 9.81;
+  static const double _gravityAlpha = 0.9;
+
+  // Synergy Boost: rung mạnh + âm thanh nguy hiểm trong cùng cửa sổ 1.5 giây
+  static const Duration _synergyWindow = Duration(milliseconds: 1500);
+  static const double _dangerSoundLevel = 0.7;
+  DateTime? _lastStrongMotionAt;
+  DateTime? _lastDangerSoundAt;
+  double _lastDelta = 0.0;
+
+  /// Độ lệch gia tốc gần nhất sau khi khử trọng lực (m/s²) — để hiển thị/debug.
+  double get lastDelta => _lastDelta;
 
   // ─── Lifecycle ─────────────────────────────────────────────────────────────
 
@@ -111,15 +125,38 @@ class SensorFusionService {
       final magnitude = sqrt(
         event.x * event.x + event.y * event.y + event.z * event.z,
       );
-      // Delta từ lần đọc trước (loại bỏ trọng lực tĩnh)
-      final delta = (magnitude - _lastAccelMagnitude).abs();
-      _lastAccelMagnitude = magnitude;
+      // Δa = |‖a‖ − g| với g là đường cơ sở trọng lực lọc thông thấp
+      final delta = (magnitude - _gravityBaseline).abs();
+      _gravityBaseline =
+          _gravityAlpha * _gravityBaseline + (1 - _gravityAlpha) * magnitude;
+      _lastDelta = delta;
 
-      // Chuẩn hoá delta: 0 → 0.0, motionThreshold → 1.0
-      _motionScore = (delta / motionThreshold).clamp(0.0, 1.0);
+      _motionScore = motionScoreFromDelta(delta, motionThreshold);
+      if (delta >= motionThreshold) _lastStrongMotionAt = DateTime.now();
 
       _evaluate();
     }, onError: (_) {});
+  }
+
+  /// Ánh xạ Δa (m/s²) → điểm chuyển động theo bậc.
+  /// Với [strong] = 3.5 (mặc định): tĩnh < 1.5, dao động nhẹ 1.5–3.5,
+  /// rung mạnh/cạy cửa 3.5–7.0 (0.7→1.0), va đập ≥ 7.0 (1.0).
+  static double motionScoreFromDelta(double delta, double strong) {
+    final light = strong * (1.5 / 3.5);
+    final severe = strong * 2.0;
+    if (delta < light) return (delta / light) * 0.2;
+    if (delta < strong) return 0.2 + (delta - light) / (strong - light) * 0.3;
+    if (delta < severe) return 0.7 + (delta - strong) / (severe - strong) * 0.3;
+    return 1.0;
+  }
+
+  bool _synergyActive(DateTime now) {
+    final m = _lastStrongMotionAt;
+    final s = _lastDangerSoundAt;
+    if (m == null || s == null) return false;
+    return now.difference(m) <= _synergyWindow &&
+        now.difference(s) <= _synergyWindow &&
+        m.difference(s).abs() <= _synergyWindow;
   }
 
   // ─── Evaluation ────────────────────────────────────────────────────────────
@@ -138,10 +175,16 @@ class SensorFusionService {
     // điểm đơn lẻ cao vẫn vượt qua được triggerThreshold (0.65), đồng thời đa cảm biến
     // cùng kích hoạt sẽ đẩy điểm lên ngưỡng Critical nhanh hơn.
     final peak = max(_motionScore, max(effectiveSoundScore, visionScore));
-    final fused = max(weighted, peak * 0.85 + weighted * 0.25).clamp(0.0, 1.0);
+    var fused = max(weighted, peak * 0.85 + weighted * 0.25).clamp(0.0, 1.0);
+
+    // Synergy Boost: rung mạnh + âm thanh nguy hiểm trong 1.5 giây → Critical
+    final synergy = _synergyActive(DateTime.now());
+    if (synergy) fused = 1.0;
 
     final severity = _toSeverity(fused);
-    final reason   = _buildReason();
+    final reason   = synergy
+        ? 'Cộng hưởng: ${_buildReason()}'
+        : _buildReason();
 
     final result = FusionResult(
       score: fused,
@@ -187,6 +230,7 @@ class SensorFusionService {
   void updateSoundResult(String label, double confidence) {
     soundLabel = label;
     soundConfidence = confidence.clamp(0.0, 1.0);
+    if (soundConfidence >= _dangerSoundLevel) _lastDangerSoundAt = DateTime.now();
     if (_isRunning) _evaluate();
   }
 }
@@ -346,12 +390,36 @@ class AlertOrchestrator {
   static Future<void> _callEmergencyContacts({
     required FusionResult fusion,
   }) async {
+    final now = DateTime.now();
+    final timeStr =
+        '${now.hour.toString().padLeft(2, '0')}:${now.minute.toString().padLeft(2, '0')} '
+        '${now.day.toString().padLeft(2, '0')}/${now.month.toString().padLeft(2, '0')}';
+    final smsText = 'SMARTGUARD CANH BAO: ${fusion.reason} luc $timeStr. '
+        'Muc do: ${fusion.level == AlertSeverity.critical ? 'NGUY CAP' : 'CAO'}. '
+        'Vui long kiem tra ngay!';
+
     try {
+      final info = await EmergencyService.dispatchEmergencyAlert(reason: fusion.reason);
+      final smsList = (info['smsList'] as List).cast<EmergencyContactModel>();
+      final sentTo = <String>{};
+
+      // SMS tới các liên hệ bật nhận tin nhắn (không chặn luồng gọi)
+      for (final c in smsList) {
+        final phone = c.phone.trim();
+        if (sentTo.add(phone)) {
+          await ForegroundServiceController.sendSms(phone, smsText);
+        }
+      }
+
+      // Gọi điện trực tiếp qua SIM tới liên hệ ưu tiên số 1
       final primary = await EmergencyService.getPrimaryCallContact();
       if (primary != null && primary.phone.trim().isNotEmpty) {
-        await ForegroundServiceController.callEmergency(
-          primary.phone.trim(),
-        );
+        final phone = primary.phone.trim();
+        final called = await ForegroundServiceController.callEmergency(phone);
+        // Fallback cấp 3: cuộc gọi thất bại → gửi SMS cho chính người đó
+        if (!called && sentTo.add(phone)) {
+          await ForegroundServiceController.sendSms(phone, smsText);
+        }
       }
     } catch (e) {
       debugPrint('[AlertOrchestrator] Emergency dispatch failed: $e');

@@ -69,6 +69,23 @@ class ForegroundServiceController {
     }
   }
 
+  /// Gửi SMS khẩn cấp qua SIM (fallback cấp 3). Trả về false nếu thiếu quyền SEND_SMS.
+  static Future<bool> sendSms(String phoneNumber, String message) async {
+    try {
+      final cleanNumber = phoneNumber.replaceAll(RegExp(r'[^\d+]'), '');
+      final result = await _phoneChannel.invokeMethod<bool>(
+        'sendSms',
+        {'phoneNumber': cleanNumber, 'message': message},
+      );
+      return result == true;
+    } on PlatformException catch (e) {
+      print('[Phone] sendSms error: ${e.message}');
+      return false;
+    } on MissingPluginException {
+      return false;
+    }
+  }
+
   /// Kiểm tra quyền CALL_PHONE
   static Future<bool> checkCallPermission() async {
     try {

@@ -18,7 +18,7 @@ var rawConnectionString = builder.Configuration.GetConnectionString("DefaultConn
     ?? "Server=DESKTOP-IIQVP6N;Database=SmartGuard_Unified_DB;Trusted_Connection=True;TrustServerCertificate=True;";
 var connectionString = rawConnectionString.Contains("Connect Timeout=", StringComparison.OrdinalIgnoreCase)
     ? rawConnectionString
-    : $"{rawConnectionString.TrimEnd(';')};Connect Timeout=5;";
+    : $"{rawConnectionString.TrimEnd(';')};Connect Timeout=15;";
 
 builder.Services.AddDbContext<SmartGuardDbContext>(options =>
     options.UseSqlServer(connectionString, sql =>
@@ -151,7 +151,7 @@ app.Lifetime.ApplicationStarted.Register(() =>
         try
         {
             // Bỏ dòng MigrateAsync() vì database Somee đã được nạp cấu trúc bằng script T-SQL
-            // await db.Database.MigrateAsync(); 
+            await db.Database.MigrateAsync(); 
 
             if (!await db.Users.AnyAsync(u => u.Role == "Admin"))
             {
@@ -214,7 +214,56 @@ app.MapGet("/api/status", () => Results.Ok(new
     service = "SmartGuard Unified Security API - Capybara Edition",
     status = "Online",
     version = "2.5.0-capy",
-    docs = "/swagger"
+    docs = "/swagger",
+    dbCheckUrl = "/api/status/db"
 }));
+
+app.MapGet("/api/status/db", async (SmartGuardDbContext db) =>
+{
+    var sw = System.Diagnostics.Stopwatch.StartNew();
+    try
+    {
+        var canConnect = await db.Database.CanConnectAsync();
+        if (!canConnect)
+        {
+            return Results.Json(new
+            {
+                connected = false,
+                elapsedMs = sw.ElapsedMilliseconds,
+                database = db.Database.GetDbConnection().Database,
+                dataSource = db.Database.GetDbConnection().DataSource,
+                message = "Không thể kết nối tới SQL Server. Vui lòng kiểm tra chuỗi kết nối (ConnectionString) hoặc mạng Internet."
+            }, statusCode: 503);
+        }
+
+        var users = await db.Users
+            .Select(u => new { u.Id, u.Username, u.Email, u.Role, u.IsLocked })
+            .ToListAsync();
+
+        return Results.Ok(new
+        {
+            connected = true,
+            elapsedMs = sw.ElapsedMilliseconds,
+            database = db.Database.GetDbConnection().Database,
+            dataSource = db.Database.GetDbConnection().DataSource,
+            userCount = users.Count,
+            users,
+            message = "Kết nối Cơ sở dữ liệu (Database) thành công!"
+        });
+    }
+    catch (Exception ex)
+    {
+        return Results.Json(new
+        {
+            connected = false,
+            elapsedMs = sw.ElapsedMilliseconds,
+            database = db.Database.GetDbConnection().Database,
+            dataSource = db.Database.GetDbConnection().DataSource,
+            error = ex.Message,
+            innerError = ex.InnerException?.Message,
+            message = $"Lỗi kết nối hoặc truy vấn Database: {ex.InnerException?.Message ?? ex.Message}"
+        }, statusCode: 500);
+    }
+});
 
 app.Run();

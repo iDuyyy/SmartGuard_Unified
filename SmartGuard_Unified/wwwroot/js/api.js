@@ -74,7 +74,14 @@ const SmartGuardApi = (function() {
       }
 
       if (!response.ok) {
-        const errorMsg = data?.message || (typeof data === 'string' ? data : 'API Request Failed');
+        let errorMsg = data?.message;
+        if (!errorMsg && data?.errors && typeof data.errors === 'object') {
+          const firstFieldErrors = Object.values(data.errors).flat();
+          if (firstFieldErrors.length > 0) errorMsg = firstFieldErrors.join(' ');
+        }
+        if (!errorMsg) {
+          errorMsg = typeof data === 'string' && data.trim() ? data : `API Error (${response.status})`;
+        }
         throw new Error(errorMsg);
       }
 
@@ -92,6 +99,9 @@ const SmartGuardApi = (function() {
     getUser,
     setUser,
     isAuthenticated: () => !!getToken(),
+    async checkDbStatus() {
+      return await request('/api/status/db');
+    },
 
     // Authentication Endpoints
     async login(identifier, password) {

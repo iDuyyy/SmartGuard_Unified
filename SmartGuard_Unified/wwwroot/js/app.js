@@ -1019,32 +1019,64 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   function openOtpModal(challengeId, maskedEmail, devOtp, serverMessage) {
-    const devBanner = devOtp
-      ? `<div style="background: #eff6ff; border: 1px dashed #3b82f6; border-radius: 10px; padding: 10px; margin-bottom: 14px; font-size: 0.85rem; color: #1e3a8a;">
-           ⚡ <strong>Mã OTP dự phòng:</strong> <span style="font-family: monospace; font-size: 1.15rem; font-weight: 800; letter-spacing: 3px; color: #2563eb;">${escapeHtml(devOtp)}</span>
-           <div style="font-size: 0.75rem; color: #475569; margin-top: 2px;">(Khi máy chủ Cloud chưa thể gửi thư trực tiếp, mã dự phòng được tạo sẵn để bạn không bị khóa tài khoản)</div>
-         </div>`
-      : `<div style="font-size: 0.82rem; color: #166534; margin-bottom: 12px; background: #f0fdf4; border: 1px solid #bbf7d0; border-radius: 8px; padding: 10px;">
-           📩 Đã gửi mã OTP 6 số đến email <strong>${escapeHtml(maskedEmail || '')}</strong>.<br>
-           <span style="font-size: 0.76rem; color: #475569;">Vui lòng kiểm tra hộp thư đến hoặc mục <strong>Spam / Thư rác</strong> trên Gmail của bạn.</span>
-         </div>`;
+    const fallbackHelp = devOtp
+      ? `<details style="margin-top: 14px; text-align: left; font-size: 0.8rem; border-top: 1px dashed #cbd5e1; padding-top: 10px;">
+           <summary style="cursor: pointer; color: #64748b; font-weight: 500;">
+             ❓ Không nhận được mã qua Email? (Hỗ trợ Thử nghiệm / Demo)
+           </summary>
+           <div style="margin-top: 8px; padding: 10px; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; color: #475569; font-size: 0.78rem; line-height: 1.5;">
+             Do môi trường Cloud miễn phí có thể giới hạn kết nối thư SMTP, mã xác thực dự phòng của phiên này là:
+             <div style="text-align: center; margin: 8px 0;">
+               <span style="font-family: monospace; font-size: 1.25rem; font-weight: 800; letter-spacing: 4px; color: #2563eb; background: #eff6ff; padding: 4px 14px; border-radius: 6px; border: 1px solid #bfdbfe;">${escapeHtml(devOtp)}</span>
+             </div>
+             Vui lòng nhập mã trên vào ô nhập để tiếp tục.
+           </div>
+         </details>`
+      : '';
 
     openModal(`
-      <div style="text-align: center; padding: 10px;">
-        <img src="/images/lock.png" style="width: 80px; height: 80px; margin-bottom: 12px;" alt="OTP">
-        <h3 style="color: var(--primary-navy); margin-bottom: 6px;">Xác thực 2 lớp (2FA)</h3>
-        <p style="font-size: 0.88rem; color: var(--secondary-text); margin-bottom: 12px;">
-          ${escapeHtml(serverMessage || 'Mã xác thực 6 chữ số đã được gửi đến')} <strong>${escapeHtml(maskedEmail || 'email của bạn')}</strong>
+      <div style="text-align: center; padding: 8px 6px;">
+        <img src="/images/lock.png" style="width: 76px; height: 76px; margin-bottom: 12px; object-fit: contain;" alt="OTP">
+        <h3 style="color: var(--primary-navy); margin-bottom: 6px; font-weight: 700; font-size: 1.25rem;">Xác thực bảo mật 2 lớp (2FA)</h3>
+        
+        <p style="font-size: 0.88rem; color: var(--secondary-text); margin-bottom: 14px; line-height: 1.5;">
+          Mã xác thực 6 chữ số đã được gửi đến:<br>
+          <strong style="color: var(--primary-navy); font-size: 0.95rem; font-family: monospace;">${escapeHtml(maskedEmail || 'email của bạn')}</strong>
         </p>
-        ${devBanner}
-        <div class="form-group">
-          <input type="text" id="otpInputCode" class="form-input" value="${devOtp ? escapeHtml(devOtp) : ''}" placeholder="Nhập 6 số OTP" maxlength="6" style="text-align: center; font-size: 1.4rem; letter-spacing: 6px; font-family: monospace;">
+
+        <div style="font-size: 0.82rem; color: #166534; margin-bottom: 16px; background: #f0fdf4; border: 1px solid #bbf7d0; border-radius: 8px; padding: 10px 12px; text-align: left;">
+          📩 Vui lòng kiểm tra hộp thư đến hoặc mục <strong>Spam / Thư rác</strong> trên Gmail của bạn. Mã có hiệu lực trong vòng <strong>5 phút</strong>.
         </div>
-        <button class="btn btn-primary btn-lg" style="width: 100%;" onclick="window.SmartGuardApp.submitOtp('${challengeId}')">
-          Xác nhận &amp; Đăng nhập
-        </button>
+
+        <div class="form-group" style="margin-bottom: 16px;">
+          <input type="text" 
+                 id="otpInputCode" 
+                 class="form-input" 
+                 value="" 
+                 placeholder="------" 
+                 maxlength="6" 
+                 inputmode="numeric" 
+                 autocomplete="one-time-code"
+                 style="text-align: center; font-size: 1.6rem; letter-spacing: 8px; font-family: monospace; font-weight: 700; height: 50px;">
+        </div>
+
+        <div style="display: flex; gap: 10px;">
+          <button class="btn btn-outline" style="flex: 1;" onclick="window.SmartGuardApp.closeModal()">
+            Hủy
+          </button>
+          <button class="btn btn-primary" style="flex: 2; font-weight: 600;" onclick="window.SmartGuardApp.submitOtp('${challengeId}')">
+            Xác nhận &amp; Đăng nhập
+          </button>
+        </div>
+
+        ${fallbackHelp}
       </div>
     `);
+
+    setTimeout(() => {
+      const input = document.getElementById('otpInputCode');
+      if (input) input.focus();
+    }, 150);
   }
 
   // Toasts
@@ -1294,20 +1326,20 @@ document.addEventListener('DOMContentLoaded', () => {
     },
 
     async submitOtp(challengeId) {
-      const code = document.getElementById('otpInputCode')?.value;
+      const code = document.getElementById('otpInputCode')?.value?.trim();
       if (!code || code.length < 6) {
-        showToast('Please enter the 6-digit OTP code', 'warning');
+        showToast('Vui lòng nhập đủ 6 chữ số mã xác thực OTP.', 'warning');
         return;
       }
 
       try {
         await SmartGuardApi.verifyOtp(challengeId, code);
         closeModal();
-        showToast('Authentication complete! Welcome.', 'success');
+        showToast('Xác thực 2 lớp thành công! Đang chuyển hướng vào hệ thống...', 'success');
         checkUserSession();
         navigateTo('dashboard');
       } catch (err) {
-        showToast(err.message || 'Invalid OTP code', 'danger');
+        showToast(err.message || 'Mã xác thực không hợp lệ hoặc đã hết hạn.', 'danger');
       }
     },
 
@@ -1318,3 +1350,4 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   };
 });
+

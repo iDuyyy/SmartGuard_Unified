@@ -6,8 +6,10 @@ class AppConfig {
   static const String defaultLanUrl = 'http://192.168.1.100:5235';
   static const String emulatorUrl = 'http://10.0.2.2:5235';
   static const String localhostUrl = 'https://localhost:44321';
+  static const String renderUrl =
+      'https://smartguard-unified.onrender.com';
 
-  static String _activeBaseUrl = localhostUrl;
+  static String _activeBaseUrl = renderUrl;
   static const String _prefKeyBaseUrl = 'smartguard_base_url';
 
   static String get baseUrl => _activeBaseUrl;
@@ -15,6 +17,7 @@ class AppConfig {
   /// Danh sách các địa chỉ ứng viên để tự động dò tìm khi mất kết nối
   static List<String> get candidateUrls => <String>{
     _activeBaseUrl,
+    renderUrl,
     localhostUrl,
     'http://127.0.0.1:5235',
     emulatorUrl,
@@ -68,6 +71,16 @@ class AppConfig {
   static Future<void> init() async {
     try {
       final prefs = await SharedPreferences.getInstance();
+
+      _activeBaseUrl = renderUrl;
+
+      await prefs.setString(
+        _prefKeyBaseUrl,
+        renderUrl,
+      );
+    } catch (_) {
+      _activeBaseUrl = renderUrl;
+    }
       final saved = prefs.getString(_prefKeyBaseUrl);
       if (saved != null &&
           saved.trim().isNotEmpty &&

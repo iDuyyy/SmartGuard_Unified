@@ -1021,26 +1021,27 @@ document.addEventListener('DOMContentLoaded', () => {
   function openOtpModal(challengeId, maskedEmail, devOtp, serverMessage) {
     const devBanner = devOtp
       ? `<div style="background: #eff6ff; border: 1px dashed #3b82f6; border-radius: 10px; padding: 10px; margin-bottom: 14px; font-size: 0.85rem; color: #1e3a8a;">
-           ⚡ <strong>Mã OTP (Local / Fallback):</strong> <span style="font-family: monospace; font-size: 1.15rem; font-weight: 800; letter-spacing: 3px;">${escapeHtml(devOtp)}</span>
-           <div style="font-size: 0.75rem; color: #475569; margin-top: 2px;">Đã tự động điền sẵn mã OTP cho bạn</div>
+           ⚡ <strong>Mã OTP dự phòng:</strong> <span style="font-family: monospace; font-size: 1.15rem; font-weight: 800; letter-spacing: 3px; color: #2563eb;">${escapeHtml(devOtp)}</span>
+           <div style="font-size: 0.75rem; color: #475569; margin-top: 2px;">(Khi máy chủ Cloud chưa thể gửi thư trực tiếp, mã dự phòng được tạo sẵn để bạn không bị khóa tài khoản)</div>
          </div>`
-      : `<div style="font-size: 0.78rem; color: var(--secondary-text); margin-bottom: 12px;">
-           💡 Kiểm tra hộp thư đến hoặc mục <strong>Spam / Thư rác</strong> trên Gmail của bạn.
+      : `<div style="font-size: 0.82rem; color: #166534; margin-bottom: 12px; background: #f0fdf4; border: 1px solid #bbf7d0; border-radius: 8px; padding: 10px;">
+           📩 Đã gửi mã OTP 6 số đến email <strong>${escapeHtml(maskedEmail || '')}</strong>.<br>
+           <span style="font-size: 0.76rem; color: #475569;">Vui lòng kiểm tra hộp thư đến hoặc mục <strong>Spam / Thư rác</strong> trên Gmail của bạn.</span>
          </div>`;
 
     openModal(`
       <div style="text-align: center; padding: 10px;">
         <img src="/images/lock.png" style="width: 80px; height: 80px; margin-bottom: 12px;" alt="OTP">
-        <h3 style="color: var(--primary-navy); margin-bottom: 6px;">Two-Factor Verification</h3>
+        <h3 style="color: var(--primary-navy); margin-bottom: 6px;">Xác thực 2 lớp (2FA)</h3>
         <p style="font-size: 0.88rem; color: var(--secondary-text); margin-bottom: 12px;">
-          ${escapeHtml(serverMessage || 'A 6-digit OTP code was sent to')} <strong>${escapeHtml(maskedEmail || 'your email')}</strong>
+          ${escapeHtml(serverMessage || 'Mã xác thực 6 chữ số đã được gửi đến')} <strong>${escapeHtml(maskedEmail || 'email của bạn')}</strong>
         </p>
         ${devBanner}
         <div class="form-group">
-          <input type="text" id="otpInputCode" class="form-input" value="${devOtp ? escapeHtml(devOtp) : ''}" placeholder="Enter 6-digit code" maxlength="6" style="text-align: center; font-size: 1.4rem; letter-spacing: 6px; font-family: monospace;">
+          <input type="text" id="otpInputCode" class="form-input" value="${devOtp ? escapeHtml(devOtp) : ''}" placeholder="Nhập 6 số OTP" maxlength="6" style="text-align: center; font-size: 1.4rem; letter-spacing: 6px; font-family: monospace;">
         </div>
         <button class="btn btn-primary btn-lg" style="width: 100%;" onclick="window.SmartGuardApp.submitOtp('${challengeId}')">
-          Verify &amp; Access Dashboard
+          Xác nhận &amp; Đăng nhập
         </button>
       </div>
     `);

@@ -113,15 +113,15 @@ namespace SmartGuard.API.Controllers
                 _db.OtpChallenges.Add(challenge);
                 await _db.SaveChangesAsync();
 
-                var emailSent = await _emailService.SendOtpEmailAsync(user.Email, otpCode, "Đăng nhập");
+                var emailSent = await _emailService.SendOtpEmailAsync(user.Email, user.Username, otpCode);
 
                 return Ok(new
                 {
                     challengeId = challenge.Id,
                     email = MaskEmail(user.Email),
                     message = emailSent
-                        ? "Vui lòng nhập mã OTP đã gửi đến email của bạn."
-                        : "Chế độ LAN/Offline: vui lòng dùng mã OTP hiển thị hoặc trong log server.",
+                        ? "Mã xác thực OTP đã được gửi đến email của bạn. Vui lòng kiểm tra hộp thư (hoặc mục Spam)."
+                        : "Máy chủ Cloud chưa mở cổng gửi email trực tiếp. Vui lòng sử dụng mã OTP dự phòng bên dưới để hoàn tất đăng nhập.",
                     expiresInSeconds = 300,
                     devOtp = emailSent ? null : otpCode
                 });

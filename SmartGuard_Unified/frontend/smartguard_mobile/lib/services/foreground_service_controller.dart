@@ -91,24 +91,6 @@ class ForegroundServiceController {
     }
   }
 
-  /// Gửi tin nhắn SMS khẩn cấp tới số [phoneNumber] qua SIM
-  static Future<bool> sendEmergencySms({
-    required String phoneNumber,
-    required String message,
-  }) async {
-    try {
-      final cleanNumber = phoneNumber.replaceAll(RegExp(r'[^\d+]'), '');
-      final result = await _phoneChannel.invokeMethod<bool>(
-        'sendEmergencySms',
-        {'phoneNumber': cleanNumber, 'message': message},
-      );
-      return result == true;
-    } on PlatformException catch (e) {
-      print('[Phone] sendEmergencySms error: ${e.message}');
-      return false;
-    }
-  }
-
   // ─── All Permissions ───────────────────────────────────────────────────────
 
   /// Yêu cầu tất cả quyền cần thiết (camera, mic, phone, notification)

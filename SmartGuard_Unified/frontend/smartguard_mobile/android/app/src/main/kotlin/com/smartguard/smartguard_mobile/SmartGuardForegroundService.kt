@@ -76,10 +76,8 @@ class SmartGuardForegroundService : Service() {
                 return START_NOT_STICKY
             }
             ACTION_ALARM -> {
-                // Cập nhật notification khi có báo động kèm tiêu đề và nội dung chi tiết
-                val title = intent?.getStringExtra("extra_title") ?: "🚨 CẢNH BÁO XÂM NHẬP!"
-                val message = intent?.getStringExtra("extra_message") ?: "SmartGuard phát hiện chuyển động bất thường. Nhấn để xem camera."
-                updateNotificationAlarm(title, message)
+                // Cập nhật notification khi có báo động
+                updateNotificationAlarm()
             }
             else -> {
                 // ACTION_START hoặc null → Khởi động
@@ -164,25 +162,12 @@ class SmartGuardForegroundService : Service() {
             .build()
     }
 
-    private fun updateNotificationAlarm(
-        title: String = "🚨 CẢNH BÁO XÂM NHẬP!",
-        message: String = "SmartGuard phát hiện chuyển động bất thường. Nhấn để xem camera."
-    ) {
+    private fun updateNotificationAlarm() {
         val notifManager = getSystemService(NotificationManager::class.java)
-        val openIntent = PendingIntent.getActivity(
-            this,
-            0,
-            Intent(this, MainActivity::class.java).apply {
-                flags = Intent.FLAG_ACTIVITY_SINGLE_TOP
-            },
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-        )
-
         val alarmNotif = NotificationCompat.Builder(this, CHANNEL_ID)
-            .setContentTitle(title)
-            .setContentText(message)
+            .setContentTitle("🚨 CẢNH BÁO XÂM NHẬP!")
+            .setContentText("SmartGuard phát hiện chuyển động bất thường. Nhấn để xem camera.")
             .setSmallIcon(android.R.drawable.ic_dialog_alert)
-            .setContentIntent(openIntent)
             .setOngoing(true)
             .setPriority(NotificationCompat.PRIORITY_MAX)
             .setCategory(NotificationCompat.CATEGORY_ALARM)

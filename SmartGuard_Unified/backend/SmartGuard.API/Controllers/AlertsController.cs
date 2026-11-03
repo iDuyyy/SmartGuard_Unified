@@ -87,50 +87,19 @@ namespace SmartGuard.API.Controllers
         public async Task<IActionResult> TriggerAlert([FromBody] TriggerAlertDto dto)
         {
             var device = await _db.Devices.Include(d => d.Zone).FirstOrDefaultAsync(d => d.Id == dto.DeviceId);
-            if (device == null)
+            if (device == null && CurrentUserId != Guid.Empty)
             {
-                // 1. Thử tìm thiết bị đầu tiên của người dùng hiện tại
-                if (CurrentUserId != Guid.Empty)
-                {
-                    device = await _db.Devices.Include(d => d.Zone)
-                        .FirstOrDefaultAsync(d => d.OwnerId == CurrentUserId);
-                }
+                // Tự động lấy thiết bị đầu tiên của người dùng hoặc khởi tạo thiết bị mặc định nếu chưa có
+                device = await _db.Devices.Include(d => d.Zone)
+                    .FirstOrDefaultAsync(d => d.OwnerId == CurrentUserId);
 
-                // 2. Thử tìm thiết bị bất kỳ đã có trong CSDL
                 if (device == null)
                 {
-                    device = await _db.Devices.Include(d => d.Zone).FirstOrDefaultAsync();
-                }
-
-                // 3. Nếu CSDL hoàn toàn chưa có thiết bị, tự động tạo mới thiết bị mặc định
-                if (device == null)
-                {
-                    var ownerId = CurrentUserId != Guid.Empty
-                        ? CurrentUserId
-                        : (await _db.Users.Select(u => u.Id).FirstOrDefaultAsync());
-
-                    if (ownerId == Guid.Empty)
-                    {
-                        // Nếu chưa có người dùng nào, tạo user admin hệ thống mặc định
-                        var defaultUser = new User
-                        {
-                            Username = "smartguard_system",
-                            Email = "system@smartguard.local",
-                            PasswordHash = BCrypt.Net.BCrypt.HashPassword("SmartGuard@2026"),
-                            Role = "Owner",
-                            EmailVerified = true
-                        };
-                        _db.Users.Add(defaultUser);
-                        await _db.SaveChangesAsync();
-                        ownerId = defaultUser.Id;
-                    }
-
                     device = new GuardDevice
                     {
-                        Id = dto.DeviceId != Guid.Empty ? dto.DeviceId : Guid.NewGuid(),
-                        OwnerId = ownerId,
-                        Name = "Camera An Ninh SmartGuard",
-                        Description = "Thiết bị giám sát trực tiếp",
+                        OwnerId = CurrentUserId,
+                        Name = "Camera Điện Thoại SmartGuard",
+                        Description = "Loại: camera | Vị trí: Khu vực chính",
                         IsArmed = true,
                         NoiseThreshold = 70.0,
                         MotionThreshold = 3.5,
@@ -141,6 +110,8 @@ namespace SmartGuard.API.Controllers
                     await _db.SaveChangesAsync();
                 }
             }
+
+            if (device == null) return NotFound(new { message = "Thiết bị không tồn tại." });
 
             if (!device.IsArmed)
             {

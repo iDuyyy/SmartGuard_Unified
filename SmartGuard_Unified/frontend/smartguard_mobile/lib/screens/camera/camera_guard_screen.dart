@@ -774,10 +774,23 @@ class _CameraGuardScreenState extends State<CameraGuardScreen> with WidgetsBindi
                       ],
                     ),
                   ),
-                  // Công tắc Bật / Tắt cảm biến & canh gác trực tiếp
+                  // Công tắc Bật / Tắt cảm biến & Nút Test Cảnh Báo Người Lạ
                   Row(
                     mainAxisSize: MainAxisSize.min,
                     children: [
+                      IconButton(
+                        icon: const Icon(Icons.warning_amber_rounded, color: AppTheme.coralPink),
+                        tooltip: 'Kích hoạt thử cảnh báo Người lạ (Gửi Discord & Báo động)',
+                        onPressed: () {
+                          _handleSecurityTrigger('PHAT_HIEN_NGUOI_LA', 1.0);
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            const SnackBar(
+                              content: Text('🚨 Đang kích hoạt thử cảnh báo Người lạ, gửi Discord & phát chuông...'),
+                              duration: Duration(seconds: 2),
+                            ),
+                          );
+                        },
+                      ),
                       Text(
                         _isGuardEnabled ? 'Đang bật' : 'Đã tắt',
                         style: TextStyle(

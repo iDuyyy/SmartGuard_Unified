@@ -38,6 +38,98 @@ document.addEventListener('DOMContentLoaded', () => {
   const modePillButtons = document.querySelectorAll('.mode-pill-btn');
   const toastContainer = document.getElementById('toastContainer');
 
+  // Emergency Alarm Sound Synthesizer (Web Audio API)
+  const AlarmSoundService = {
+    audioCtx: null,
+    oscillator: null,
+    gainNode: null,
+    timer: null,
+    isPlaying: false,
+
+    startSiren(durationSeconds = 0) {
+      if (this.isPlaying) return;
+      try {
+        const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+        if (!AudioContextClass) return;
+        this.audioCtx = new AudioContextClass();
+        if (this.audioCtx.state === 'suspended') {
+          this.audioCtx.resume();
+        }
+
+        const osc = this.audioCtx.createOscillator();
+        const gain = this.audioCtx.createGain();
+
+        osc.type = 'sawtooth';
+        const now = this.audioCtx.currentTime;
+        osc.frequency.setValueAtTime(750, now);
+        for (let i = 0; i < 50; i++) {
+          osc.frequency.linearRampToValueAtTime(1250, now + (i * 0.8) + 0.4);
+          osc.frequency.linearRampToValueAtTime(750, now + ((i + 1) * 0.8));
+        }
+
+        gain.gain.setValueAtTime(0.2, now);
+        osc.connect(gain);
+        gain.connect(this.audioCtx.destination);
+
+        osc.start();
+        this.oscillator = osc;
+        this.gainNode = gain;
+        this.isPlaying = true;
+
+        const btnSilence = document.getElementById('btnSilenceSiren');
+        if (btnSilence) btnSilence.style.display = 'inline-block';
+
+        if (durationSeconds > 0) {
+          this.timer = setTimeout(() => {
+            this.stopSiren();
+          }, durationSeconds * 1000);
+        }
+      } catch (err) {
+        console.warn('Alarm sound could not start:', err);
+      }
+    },
+
+    stopSiren() {
+      if (this.timer) clearTimeout(this.timer);
+      this.timer = null;
+      if (!this.isPlaying) return;
+      try {
+        if (this.oscillator) {
+          this.oscillator.stop();
+          this.oscillator.disconnect();
+        }
+        if (this.audioCtx) {
+          this.audioCtx.close();
+        }
+      } catch (_) {}
+      this.isPlaying = false;
+      this.oscillator = null;
+      this.gainNode = null;
+      this.audioCtx = null;
+
+      const btnSilence = document.getElementById('btnSilenceSiren');
+      if (btnSilence) btnSilence.style.display = 'none';
+    }
+  };
+
+  // Notification Badge Manager
+  function updateNotificationBadge() {
+    const badge = document.getElementById('topbarNotifBadge');
+    if (!badge) return;
+    const unresolvedAlerts = (state.alerts || []).filter(a => {
+      const st = (a.status || '').toLowerCase();
+      return st === 'triggered' || st === 'active' || (!a.isResolved && st !== 'resolved' && st !== 'knownperson' && st !== 'muted');
+    });
+    const count = unresolvedAlerts.length;
+    if (count > 0) {
+      badge.textContent = count > 99 ? '99+' : count;
+      badge.style.display = 'inline-flex';
+    } else {
+      badge.style.display = 'none';
+      badge.textContent = '0';
+    }
+  }
+
   // Initialize
   initApp();
 
@@ -236,9 +328,19 @@ document.addEventListener('DOMContentLoaded', () => {
       // 3. Alerts
       try {
         const a = await SmartGuardApi.getAlertHistory(40);
-        if (a && a.length > 0) state.alerts = a;
+        if (Array.isArray(a)) {
+          state.alerts = a;
+        } else if (!SmartGuardApi.isAuthenticated()) {
+          useDefaultAlerts();
+        } else {
+          state.alerts = [];
+        }
       } catch (err) {
-        useDefaultAlerts();
+        if (!SmartGuardApi.isAuthenticated()) {
+          useDefaultAlerts();
+        } else {
+          state.alerts = [];
+        }
       }
 
       // 4. Evidence / Recordings
@@ -641,6 +743,7 @@ document.addEventListener('DOMContentLoaded', () => {
           <p class="empty-state-desc">Your perimeter is quiet and protected under Capybara security patrol.</p>
         </div>
       `;
+      updateNotificationBadge();
       return;
     }
 
@@ -674,6 +777,7 @@ document.addEventListener('DOMContentLoaded', () => {
         </div>
       `;
     }).join('');
+    updateNotificationBadge();
   }
 
   // View 6: Recordings Gallery
@@ -867,6 +971,10 @@ document.addEventListener('DOMContentLoaded', () => {
         btn.classList.add('active');
         const target = document.getElementById(`tab-pane-${tab}`);
         if (target) target.classList.add('active');
+
+        if (tab === 'notifications') {
+          window.SmartGuardApp.loadDiscordSettings();
+        }
       });
     });
   }
@@ -1305,10 +1413,101 @@ document.addEventListener('DOMContentLoaded', () => {
         }
         const alt = state.alerts.find(a => a.id === id);
         if (alt) alt.status = action;
-        showToast(`Alert updated: ${action}`, 'success');
+        if (action === 'mute') {
+          AlarmSoundService.stopSiren();
+        }
+        showToast(`Cập nhật cảnh báo: ${action}`, 'success');
         renderAlerts();
+        updateNotificationBadge();
       } catch (err) {
         showToast(err.message, 'danger');
+      }
+    },
+
+    async loadDiscordSettings() {
+      try {
+        const res = await SmartGuardApi.getDiscordConfig();
+        const input = document.getElementById('cfgDiscordWebhook');
+        if (input && res && res.webhookUrl) {
+          input.value = res.webhookUrl;
+        }
+        const badge = document.getElementById('discordStatusBadge');
+        if (badge) {
+          if (res && res.isConfigured) {
+            badge.className = 'badge badge-success';
+            badge.textContent = 'Đã kết nối';
+          } else {
+            badge.className = 'badge badge-warning';
+            badge.textContent = 'Chưa cấu hình';
+          }
+        }
+      } catch (_) {}
+    },
+
+    async saveDiscordWebhook() {
+      const input = document.getElementById('cfgDiscordWebhook');
+      const val = input?.value?.trim() || '';
+      if (!val) {
+        showToast('Vui lòng dán đường dẫn Discord Webhook hợp lệ.', 'warning');
+        return;
+      }
+      try {
+        const res = await SmartGuardApi.saveDiscordConfig(val);
+        showToast(res.message || 'Đã lưu cấu hình Discord Webhook thành công!', 'success');
+        this.loadDiscordSettings();
+      } catch (err) {
+        showToast(err.message || 'Lỗi lưu cấu hình Discord Webhook.', 'danger');
+      }
+    },
+
+    async testDiscordWebhook() {
+      const input = document.getElementById('cfgDiscordWebhook');
+      const val = input?.value?.trim() || '';
+      showToast('Đang gửi tin nhắn thử nghiệm tới Discord...', 'info');
+      try {
+        const res = await SmartGuardApi.testDiscord(val);
+        if (res && res.success) {
+          showToast('✅ Đã gửi cảnh báo thử nghiệm lên Discord thành công!', 'success');
+          this.loadDiscordSettings();
+        } else {
+          showToast(res.message || 'Không thể gửi tin nhắn tới Discord.', 'danger');
+        }
+      } catch (err) {
+        showToast(err.message || 'Lỗi gửi tin nhắn thử nghiệm tới Discord.', 'danger');
+      }
+    },
+
+    testAlarmSound() {
+      AlarmSoundService.startSiren(5);
+      showToast('🔔 Đang phát thử chuông còi báo động (5 giây)...', 'info');
+    },
+
+    stopAlarmSound() {
+      AlarmSoundService.stopSiren();
+      showToast('🔕 Đã tắt chuông còi báo động.', 'info');
+    },
+
+    async simulateStrangerAlert() {
+      showToast('🚨 Đang kích hoạt cảnh báo Người lạ & gửi Discord...', 'info');
+      AlarmSoundService.startSiren(15);
+      try {
+        const devId = (state.devices && state.devices.length > 0) ? state.devices[0].id : null;
+        await SmartGuardApi.triggerAlert({
+          deviceId: devId,
+          triggerReason: 'PHAT_HIEN_NGUOI_LA',
+          triggerScore: 0.95,
+          severity: 'Critical',
+          imageUrl: '/images/sticker_system(6).png'
+        });
+        showToast('🚨 Cảnh báo Người lạ đã kích hoạt và bắn tin Discord!', 'success');
+        const updated = await SmartGuardApi.getAlertHistory(40);
+        if (Array.isArray(updated)) {
+          state.alerts = updated;
+          renderAlerts();
+          updateNotificationBadge();
+        }
+      } catch (err) {
+        showToast(err.message || 'Lỗi kích hoạt cảnh báo', 'danger');
       }
     },
 

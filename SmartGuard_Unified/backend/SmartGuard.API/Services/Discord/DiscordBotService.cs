@@ -35,33 +35,61 @@ namespace SmartGuard.API.Services.Discord
             _serviceProvider = serviceProvider;
         }
 
+        private static string GetStorageFilePath()
+        {
+            try
+            {
+                return Path.Combine(AppContext.BaseDirectory, "discord_webhook.txt");
+            }
+            catch
+            {
+                return "discord_webhook.txt";
+            }
+        }
+
         public string GetActiveWebhookUrl()
         {
             if (!string.IsNullOrWhiteSpace(_runtimeWebhookUrl))
                 return _runtimeWebhookUrl.Trim();
 
-            var envUrl = Environment.GetEnvironmentVariable("DISCORD_WEBHOOK_URL")
-                      ?? Environment.GetEnvironmentVariable("Discord__WebhookUrl");
-            if (!string.IsNullOrWhiteSpace(envUrl))
-                return envUrl.Trim();
-
-            if (!string.IsNullOrWhiteSpace(_options.WebhookUrl))
-                return _options.WebhookUrl.Trim();
-
             try
             {
-                return Encoding.UTF8.GetString(Convert.FromBase64String(FallbackWebhookBase64)).Trim();
+                var filePath = GetStorageFilePath();
+                if (File.Exists(filePath))
+                {
+                    var saved = File.ReadAllText(filePath).Trim();
+                    if (IsValidWebhookUrl(saved))
+                    {
+                        _runtimeWebhookUrl = saved;
+                        return saved;
+                    }
+                }
             }
-            catch
-            {
-                return string.Empty;
-            }
+            catch { }
+
+            var envUrl = Environment.GetEnvironmentVariable("DISCORD_WEBHOOK_URL")
+                      ?? Environment.GetEnvironmentVariable("Discord__WebhookUrl");
+            if (!string.IsNullOrWhiteSpace(envUrl) && IsValidWebhookUrl(envUrl))
+                return envUrl.Trim();
+
+            if (!string.IsNullOrWhiteSpace(_options.WebhookUrl) && IsValidWebhookUrl(_options.WebhookUrl))
+                return _options.WebhookUrl.Trim();
+
+            return string.Empty;
         }
 
         public void SetWebhookUrl(string webhookUrl)
         {
             _runtimeWebhookUrl = (webhookUrl ?? string.Empty).Trim();
             _options.WebhookUrl = _runtimeWebhookUrl;
+            try
+            {
+                if (IsValidWebhookUrl(_runtimeWebhookUrl))
+                {
+                    File.WriteAllText(GetStorageFilePath(), _runtimeWebhookUrl);
+                }
+            }
+            catch { }
             _logger.LogInformation("✅ Đã cập nhật Discord Webhook URL mới lúc chạy (Runtime).");
         }
 

@@ -176,7 +176,7 @@
         <!-- Notification Bell Icon -->
         <button class="topbar-action-btn" title="Notifications" onclick="window.SmartGuardApp.navigateTo('events')">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"></path><path d="M13.73 21a2 2 0 0 1-3.46 0"></path></svg>
-          <span class="notif-badge">3</span>
+          <span class="notif-badge" id="topbarNotifBadge" style="display: none;">0</span>
         </button>
 
         <!-- User Profile Chip -->
@@ -742,18 +742,47 @@
 
         <!-- Tab 3: Notifications -->
         <div class="settings-tab-pane" id="tab-pane-notifications">
-          <div class="card" style="max-width: 650px;">
-            <h4 class="card-title" style="margin-bottom: 14px;">Discord & Email Alert Integrations</h4>
-            <p style="font-size: 0.85rem; color: var(--secondary-text); margin-bottom: 18px;">
-              SmartGuard sends rich Discord embed alerts with captured evidence photos and interactive action buttons.
-            </p>
-            <div class="form-group">
-              <label class="form-label">Discord Webhook / Bot Status</label>
-              <input type="text" class="form-input" value="Connected to #smartguard-alerts" readonly>
+          <div class="card" style="max-width: 680px; margin-bottom: 20px;">
+            <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 14px;">
+              <div>
+                <h4 class="card-title" style="margin-bottom: 4px;">Tích hợp Thông báo Discord &amp; Còi Báo Động</h4>
+                <p style="font-size: 0.85rem; color: var(--secondary-text);">
+                  Tự động gửi ảnh bằng chứng và cảnh báo an ninh tức thì về máy chủ / kênh Discord của gia đình bạn.
+                </p>
+              </div>
+              <span class="badge badge-info" id="discordStatusBadge">Webhook</span>
             </div>
-            <div class="form-group">
-              <label class="form-label">Email OTP Delivery</label>
-              <input type="text" class="form-input" value="Active (SMTP / Dev Console Fallback)" readonly>
+
+            <div class="form-group" style="margin-bottom: 14px;">
+              <label class="form-label">Đường dẫn Discord Webhook URL</label>
+              <input type="text" id="cfgDiscordWebhook" class="form-input" placeholder="https://discord.com/api/webhooks/..." style="font-family: monospace; font-size: 0.88rem;">
+              <small style="color: var(--secondary-text); display: block; margin-top: 6px;">
+                💡 <strong>Cách lấy URL:</strong> Vào Discord &gt; Cài đặt kênh &gt; Tích hợp &gt; Webhooks &gt; Tạo Webhook &gt; Sao chép URL Webhook và dán vào đây.
+              </small>
+            </div>
+
+            <div style="display: flex; gap: 10px; margin-bottom: 20px; flex-wrap: wrap;">
+              <button class="btn btn-primary" onclick="window.SmartGuardApp.saveDiscordWebhook()" style="flex: 1; min-width: 160px;">
+                💾 Lưu Cấu Hình Webhook
+              </button>
+              <button class="btn btn-outline" onclick="window.SmartGuardApp.testDiscordWebhook()" style="flex: 1; min-width: 180px;">
+                🚀 Bắn thử thông báo Discord
+              </button>
+            </div>
+
+            <hr style="border: none; border-top: 1px solid var(--border-light, #e2e8f0); margin: 20px 0;">
+
+            <h5 style="margin-bottom: 10px; font-weight: 600; color: var(--primary-navy);">Kiểm tra Chuông &amp; Cảnh Báo An Ninh (Test Center)</h5>
+            <div style="display: flex; gap: 10px; flex-wrap: wrap;">
+              <button class="btn btn-warning" onclick="window.SmartGuardApp.testAlarmSound()" style="flex: 1; min-width: 170px;">
+                🔔 Thử Chuông Báo Động
+              </button>
+              <button class="btn btn-danger" onclick="window.SmartGuardApp.simulateStrangerAlert()" style="flex: 1; min-width: 220px;">
+                🚨 Mô phỏng Phát hiện Người lạ (Gửi Discord &amp; Hú Còi)
+              </button>
+              <button class="btn btn-outline" id="btnSilenceSiren" onclick="window.SmartGuardApp.stopAlarmSound()" style="min-width: 120px; display: none;">
+                🔕 Tắt Còi
+              </button>
             </div>
           </div>
         </div>

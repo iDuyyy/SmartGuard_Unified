@@ -85,6 +85,23 @@ namespace SmartGuard.API.Services.Adaptive
 
             var zoneName = device.Zone?.Name ?? matchedRule?.Zone?.Name ?? "Khu vực chung";
 
+            var isStrangerThreat = triggerReason.Contains("NGUOI_LA", StringComparison.OrdinalIgnoreCase)
+                                   || triggerReason.Contains("STRANGER", StringComparison.OrdinalIgnoreCase)
+                                   || severity.Equals("Critical", StringComparison.OrdinalIgnoreCase);
+
+            // Nếu là người lạ hoặc mối nguy an ninh nghiêm trọng: LUÔN KÍCH HOẠT báo động, còi hú và bắn Discord
+            if (isStrangerThreat)
+            {
+                var strangerExplanation = $"🚨 [BẢO VỆ KHẨN CẤP] Phát hiện người lạ / mối nguy an ninh nghiêm trọng tại [{zoneName}]. Hệ thống ưu tiên phát động báo động toàn diện và gửi thông báo Discord.";
+                return new AdaptiveEvaluationResult(
+                    ShouldTriggerAlert: true,
+                    EnableAlarmSound: true,
+                    EnableDiscordNotification: true,
+                    ReasonExplanation: strangerExplanation,
+                    SuppressionReason: null
+                );
+            }
+
             // Nếu phân vùng này bị tắt giám sát trong chế độ hiện tại (Ví dụ: Phòng khách trong Chế độ Ở nhà)
             if (matchedRule != null && !matchedRule.EnableMonitoring)
             {
@@ -118,7 +135,7 @@ namespace SmartGuard.API.Services.Adaptive
             }
 
             // 4. Cho phép kích hoạt cảnh báo kèm diễn giải nguồn gốc (Explainable Alert)
-            var enableAlarm = matchedRule?.EnableAlarmSound ?? (activeProfile.ModeName != "Home");
+            var enableAlarm = matchedRule?.EnableAlarmSound ?? true;
             var enableDiscord = matchedRule?.EnableDiscordNotification ?? true;
             var sensitivity = matchedRule?.CustomSensitivity ?? 1.0;
 

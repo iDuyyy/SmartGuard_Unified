@@ -234,6 +234,25 @@ const SmartGuardApi = (function() {
       return await request(`/api/Alerts/device/${deviceId}/status`);
     },
 
+    // Discord Integration Endpoints
+    async getDiscordConfig() {
+      return await request('/api/Alerts/discord-config');
+    },
+
+    async saveDiscordConfig(webhookUrl) {
+      return await request('/api/Alerts/discord-config', {
+        method: 'POST',
+        body: JSON.stringify({ webhookUrl })
+      });
+    },
+
+    async testDiscord(webhookUrl) {
+      return await request('/api/Alerts/test-discord', {
+        method: 'POST',
+        body: JSON.stringify({ webhookUrl })
+      });
+    },
+
     // Evidence & Images Endpoints
     async getEvidenceList(limit = 40) {
       return await request(`/api/Images/list?limit=${limit}`);
@@ -272,4 +291,3 @@ const SmartGuardApi = (function() {
 
 // Export globally
 window.SmartGuardApi = SmartGuardApi;
-

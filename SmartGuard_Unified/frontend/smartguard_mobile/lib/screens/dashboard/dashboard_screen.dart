@@ -1,6 +1,8 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:battery_plus/battery_plus.dart';
 import '../../core/api_client.dart';
 import '../../core/app_config.dart';
 import '../../core/app_theme.dart';
@@ -22,6 +24,10 @@ class DashboardScreenState extends State<DashboardScreen> {
   List<DeviceModel> _devices = [];
   List<AlertModel> _recentAlerts = [];
   int _alertCountToday = 0;
+  int _batteryLevel = 100;
+
+  final Battery _battery = Battery();
+  StreamSubscription<BatteryState>? _batterySubscription;
 
   void reloadDashboard() {
     _loadDashboardData();
@@ -30,11 +36,38 @@ class DashboardScreenState extends State<DashboardScreen> {
   @override
   void initState() {
     super.initState();
+    _initBatteryListener();
     _loadDashboardData();
+  }
+
+  @override
+  void dispose() {
+    _batterySubscription?.cancel();
+    super.dispose();
+  }
+
+  Future<void> _initBatteryListener() async {
+    try {
+      final level = await _battery.batteryLevel;
+      if (mounted) setState(() => _batteryLevel = level);
+    } catch (_) {}
+
+    _batterySubscription = _battery.onBatteryStateChanged.listen((_) async {
+      try {
+        final level = await _battery.batteryLevel;
+        if (mounted) setState(() => _batteryLevel = level);
+      } catch (_) {}
+    });
   }
 
   Future<void> _loadDashboardData() async {
     setState(() => _isLoading = true);
+    
+    try {
+      final level = await _battery.batteryLevel;
+      _batteryLevel = level;
+    } catch (_) {}
+
     final isOnline = await ApiClient.testConnection();
 
     if (!isOnline) {
@@ -535,10 +568,14 @@ class DashboardScreenState extends State<DashboardScreen> {
                       children: [
                         Expanded(
                           child: _buildMetricTile(
-                            icon: Icons.battery_charging_full_rounded,
-                            iconColor: AppTheme.statusArmed,
+                            icon: _batteryLevel <= 20
+                                ? Icons.battery_alert_rounded
+                                : Icons.battery_charging_full_rounded,
+                            iconColor: _batteryLevel <= 20
+                                ? AppTheme.statusAlarm
+                                : AppTheme.statusArmed,
                             title: 'Pin',
-                            subtitle: '87%',
+                            subtitle: '$_batteryLevel%',
                           ),
                         ),
                         const SizedBox(width: 12),

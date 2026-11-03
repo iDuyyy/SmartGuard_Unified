@@ -1101,6 +1101,37 @@ document.addEventListener('DOMContentLoaded', () => {
   // Global App Actions for Inline Handlers
   window.SmartGuardApp = {
     navigateTo,
+    switchAuthMode(mode) {
+      const isReg = mode === 'register';
+      const loginForm = document.getElementById('loginForm');
+      const registerForm = document.getElementById('registerForm');
+      const tabLogin = document.getElementById('authTabLogin');
+      const tabRegister = document.getElementById('authTabRegister');
+      const footerSwitch = document.getElementById('authFooterSwitch');
+      const cardTitle = document.getElementById('authCardTitle');
+      const cardSubtitle = document.getElementById('authCardSubtitle');
+      if (loginForm) loginForm.style.display = isReg ? 'none' : 'block';
+      if (registerForm) registerForm.style.display = isReg ? 'block' : 'none';
+      if (tabLogin) {
+        tabLogin.className = isReg ? 'btn btn-outline btn-sm' : 'btn btn-primary btn-sm';
+        tabLogin.style.border = isReg ? 'none' : '';
+      }
+      if (tabRegister) {
+        tabRegister.className = isReg ? 'btn btn-primary btn-sm' : 'btn btn-outline btn-sm';
+        tabRegister.style.border = !isReg ? 'none' : '';
+      }
+      if (cardTitle) cardTitle.textContent = isReg ? 'Create Guardian Account' : 'Security Guardian Login';
+      if (cardSubtitle) {
+        cardSubtitle.textContent = isReg
+          ? 'Register a new account to monitor your cameras and receive OTP alerts'
+          : 'Authenticate to access smart home camera surveillance';
+      }
+      if (footerSwitch) {
+        footerSwitch.innerHTML = isReg
+          ? 'Already have an account? <button type="button" onclick="window.SmartGuardApp.switchAuthMode(\'login\')" style="background: none; border: none; padding: 0; cursor: pointer; font-weight: 700; color: var(--security-blue); font-size: inherit; text-decoration: underline;">Sign In</button>'
+          : 'Don\'t have a camera account? <button type="button" onclick="window.SmartGuardApp.switchAuthMode(\'register\')" style="background: none; border: none; padding: 0; cursor: pointer; font-weight: 700; color: var(--security-blue); font-size: inherit; text-decoration: underline;">Register New Account</button>';
+      }
+    },
     showToast,
     closeModal,
 

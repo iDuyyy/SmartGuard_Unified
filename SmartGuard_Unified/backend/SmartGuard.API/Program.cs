@@ -189,7 +189,19 @@ app.UseCors("AllowAll");
 
 // Cho phép load trang chủ index.html mặc định và tài nguyên tĩnh Web Dashboard Capybara Security
 app.UseDefaultFiles();
-app.UseStaticFiles(); // Cho phép truy cập ảnh bằng chứng tại /evidence/... và Web Dashboard Capybara Security
+app.UseStaticFiles(new StaticFileOptions
+{
+    OnPrepareResponse = ctx =>
+    {
+        var name = ctx.File.Name.ToLowerInvariant();
+        if (name.EndsWith(".html") || name.EndsWith(".js") || name.EndsWith(".css"))
+        {
+            ctx.Context.Response.Headers["Cache-Control"] = "no-cache, no-store, must-revalidate";
+            ctx.Context.Response.Headers["Pragma"] = "no-cache";
+            ctx.Context.Response.Headers["Expires"] = "0";
+        }
+    }
+}); // Cho phép truy cập ảnh bằng chứng tại /evidence/... và Web Dashboard Capybara Security
 
 app.UseRateLimiter();
 app.UseAuthentication();

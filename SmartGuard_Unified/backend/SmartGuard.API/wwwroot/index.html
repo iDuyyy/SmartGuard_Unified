@@ -859,10 +859,10 @@
 
             <!-- Tab switcher between Login and Register -->
             <div style="display: flex; gap: 8px; margin-bottom: 18px; background: var(--pale-blue-bg, #f1f5f9); padding: 4px; border-radius: 12px;">
-              <button type="button" id="authTabLogin" class="btn btn-primary btn-sm" style="flex: 1;">
+              <button type="button" id="authTabLogin" class="btn btn-primary btn-sm" style="flex: 1;" onclick="window.SmartGuardApp && window.SmartGuardApp.switchAuthMode('login')">
                 Sign In
               </button>
-              <button type="button" id="authTabRegister" class="btn btn-outline btn-sm" style="flex: 1; border: none;">
+              <button type="button" id="authTabRegister" class="btn btn-outline btn-sm" style="flex: 1; border: none;" onclick="window.SmartGuardApp && window.SmartGuardApp.switchAuthMode('register')">
                 Register Account
               </button>
             </div>
@@ -910,7 +910,7 @@
 
             <div class="auth-footer" id="authFooterSwitch">
               Don't have a camera account?
-              <a href="#auth" id="linkSwitchToRegister" style="font-weight: 700; color: var(--security-blue);">Register New Account</a>
+              <button type="button" id="linkSwitchToRegister" onclick="window.SmartGuardApp && window.SmartGuardApp.switchAuthMode('register')" style="background: none; border: none; padding: 0; cursor: pointer; font-weight: 700; color: var(--security-blue); font-size: inherit; text-decoration: underline;">Register New Account</button>
             </div>
 
           </div>
@@ -948,9 +948,9 @@
 <div class="toast-container" id="toastContainer"></div>
 
 <!-- Application Scripts -->
-<script src="/js/api.js"></script>
-<script src="/js/camera.js"></script>
-<script src="/js/app.js"></script>
+<script src="/js/api.js?v=20261103"></script>
+<script src="/js/camera.js?v=20261103"></script>
+<script src="/js/app.js?v=20261103"></script>
 
 </body>
 </html>

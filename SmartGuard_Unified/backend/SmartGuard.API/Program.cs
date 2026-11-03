@@ -150,8 +150,7 @@ app.Lifetime.ApplicationStarted.Register(() =>
 
         try
         {
-            // Bỏ dòng MigrateAsync() vì database Somee đã được nạp cấu trúc bằng script T-SQL
-            await db.Database.MigrateAsync(); 
+            await db.Database.MigrateAsync();
 
             if (!await db.Users.AnyAsync(u => u.Role == "Admin"))
             {

@@ -3,114 +3,114 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../models/models.dart';
 
 class EmergencyService {
-  static const String _storageKey = 'smartguard_emergency_contacts';
+  static const String _keyContacts = 'sg_emergency_contacts';
+  static const Set<String> _demoIds = {'1', '2', '3'};
 
+  /// Lấy danh sách liên hệ khẩn cấp (người thân) đã lưu
   static Future<List<EmergencyContactModel>> getContacts() async {
     final prefs = await SharedPreferences.getInstance();
-    final jsonStr = prefs.getString(_storageKey);
-
-    if (jsonStr != null && jsonStr.isNotEmpty) {
-      try {
-        final List<dynamic> list = jsonDecode(jsonStr);
-        return list.map((e) => EmergencyContactModel.fromJson(e as Map<String, dynamic>)).toList();
-      } catch (_) {}
+    final raw = prefs.getString(_keyContacts);
+    if (raw == null || raw.isEmpty) {
+      return [];
     }
-
-    // Default emergency family members (matching user mockup)
-    final defaultList = [
-      EmergencyContactModel(
-        id: 'ec-1',
-        name: 'Quỳnh Hương',
-        phone: '0988 123 456',
-        relationship: 'Chủ nhà',
-        isCallAlert: true,
-        isSmsAlert: true,
-        email: 'quynhhuong@gmail.com',
-      ),
-      EmergencyContactModel(
-        id: 'ec-2',
-        name: 'Minh Trí',
-        phone: '0977 654 321',
-        relationship: 'Bố',
-        isCallAlert: true,
-        isSmsAlert: true,
-      ),
-      EmergencyContactModel(
-        id: 'ec-3',
-        name: 'Bảo Anh',
-        phone: '0912 888 999',
-        relationship: 'Vợ',
-        isCallAlert: true,
-        isSmsAlert: true,
-      ),
-    ];
-
-    await saveContacts(defaultList);
-    return defaultList;
+    try {
+      final List<dynamic> list = jsonDecode(raw);
+      final parsed = list
+          .map((e) => EmergencyContactModel.fromJson(e as Map<String, dynamic>))
+          .toList();
+      // Nếu trong danh sách đã có liên hệ thật do người dùng thêm, loại bỏ 3 số mẫu ảo cũ
+      final hasRealContact = parsed.any((c) => !_demoIds.contains(c.id));
+      if (hasRealContact) {
+        final cleaned = parsed.where((c) => !_demoIds.contains(c.id)).toList();
+        if (cleaned.length != parsed.length) {
+          await saveContacts(cleaned);
+        }
+        return cleaned;
+      }
+      return parsed;
+    } catch (_) {
+      return [];
+    }
   }
 
+  /// Lấy liên hệ ưu tiên số 1 sẽ được gọi điện khi có báo động
+  static Future<EmergencyContactModel?> getPrimaryCallContact() async {
+    final contacts = await getContacts();
+    final callList = contacts.where((c) => c.isCallAlert && c.phone.trim().isNotEmpty).toList();
+    if (callList.isEmpty) return null;
+    // Ưu tiên số thật do người dùng thêm trước
+    final realCallList = callList.where((c) => !_demoIds.contains(c.id)).toList();
+    if (realCallList.isNotEmpty) return realCallList.first;
+    return callList.first;
+  }
+
+  /// Lưu toàn bộ danh sách liên hệ khẩn cấp
   static Future<void> saveContacts(List<EmergencyContactModel> contacts) async {
     final prefs = await SharedPreferences.getInstance();
-    final jsonList = contacts.map((e) => e.toJson()).toList();
-    await prefs.setString(_storageKey, jsonEncode(jsonList));
+    final encoded = jsonEncode(contacts.map((c) => c.toJson()).toList());
+    await prefs.setString(_keyContacts, encoded);
   }
 
-  static Future<void> addContact(EmergencyContactModel contact) async {
+  /// Thêm người thân mới (Đặt lên ĐẦU danh sách làm số ưu tiên gọi chính và xóa số mẫu ảo)
+  static Future<List<EmergencyContactModel>> addContact(EmergencyContactModel contact) async {
     final current = await getContacts();
-    current.add(contact);
+    current.removeWhere((c) => _demoIds.contains(c.id));
+    current.insert(0, contact);
     await saveContacts(current);
+    return current;
   }
 
-  static Future<void> updateContact(EmergencyContactModel updated) async {
+  /// Đặt một người thân lên đầu danh sách làm Số ưu tiên gọi khẩn cấp số 1
+  static Future<List<EmergencyContactModel>> setPrimaryContact(String id) async {
+    final current = await getContacts();
+    final idx = current.indexWhere((c) => c.id == id);
+    if (idx > 0) {
+      final item = current.removeAt(idx);
+      current.insert(0, item);
+      await saveContacts(current);
+    }
+    return current;
+  }
+
+  /// Cập nhật thông tin người thân
+  static Future<List<EmergencyContactModel>> updateContact(EmergencyContactModel updated) async {
     final current = await getContacts();
     final index = current.indexWhere((c) => c.id == updated.id);
     if (index != -1) {
       current[index] = updated;
       await saveContacts(current);
     }
+    return current;
   }
 
-  static Future<void> deleteContact(String id) async {
+  /// Xóa người thân khỏi danh sách khẩn cấp
+  static Future<List<EmergencyContactModel>> deleteContact(String id) async {
     final current = await getContacts();
     current.removeWhere((c) => c.id == id);
     await saveContacts(current);
+    return current;
   }
 
-  // Trigger emergency dispatch (SMS & Call simulation for intrusions)
-  // Returns a map with: contacts (List), summary (String), callList (List), smsList (List)
+  /// Trả về danh sách người thân cần gọi điện và nhắn tin khi có báo động
   static Future<Map<String, dynamic>> dispatchEmergencyAlert({
     required String reason,
-    String location = 'Không xác định',
+    String location = 'SmartGuard App',
   }) async {
     final contacts = await getContacts();
-    final callList = <EmergencyContactModel>[];
-    final smsList = <EmergencyContactModel>[];
-    final notified = <String>[];
-
-    for (final contact in contacts) {
-      if (contact.isCallAlert) {
-        callList.add(contact);
-        notified.add('📞 Gọi ${contact.name} (${contact.phone})');
-      }
-      if (contact.isSmsAlert) {
-        smsList.add(contact);
-        notified.add('💬 SMS → ${contact.name} (${contact.phone})');
-      }
-    }
-
-    final summary = notified.isEmpty
-        ? 'Không có liên hệ khẩn cấp nào được cấu hình.'
-        : 'Đã thông báo ${callList.length} cuộc gọi & ${smsList.length} SMS.\n${notified.join('\n')}';
+    final callList = contacts
+        .where((c) => c.isCallAlert && c.phone.trim().isNotEmpty)
+        .toList();
+    final smsList = contacts
+        .where((c) => c.isSmsAlert && c.phone.trim().isNotEmpty)
+        .toList();
 
     return {
-      'contacts': contacts,
       'callList': callList,
       'smsList': smsList,
-      'notified': notified,
-      'summary': summary,
+      'primaryPhone': callList.isNotEmpty ? callList.first.phone : null,
+      'primaryName': callList.isNotEmpty ? callList.first.name : null,
       'reason': reason,
       'location': location,
     };
   }
 }
-

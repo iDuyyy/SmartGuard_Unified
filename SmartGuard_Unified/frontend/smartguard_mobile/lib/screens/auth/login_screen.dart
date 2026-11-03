@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import '../../core/app_theme.dart';
 import '../../core/session_manager.dart';
+import '../../models/models.dart';
 import '../../services/auth_service.dart';
 import 'otp_screen.dart';
 import 'register_screen.dart';
@@ -21,6 +22,7 @@ class _LoginScreenState extends State<LoginScreen> {
   bool _obscurePassword = true;
   bool _rememberMe = true;
   bool _deviceSupportsBiometric = false;
+  UserModel? _savedBioUser;
 
   @override
   void initState() {
@@ -30,7 +32,18 @@ class _LoginScreenState extends State<LoginScreen> {
 
   Future<void> _checkBiometric() async {
     final canBio = await AuthService.canUseBiometric();
-    if (mounted) setState(() => _deviceSupportsBiometric = canBio);
+    final savedUser = await SessionManager.getSavedBiometricUser();
+    if (mounted) {
+      setState(() {
+        _deviceSupportsBiometric = canBio;
+        _savedBioUser = savedUser;
+        if (savedUser != null && _identifierController.text.isEmpty) {
+          _identifierController.text = savedUser.email.isNotEmpty
+              ? savedUser.email
+              : savedUser.username;
+        }
+      });
+    }
 
     if (canBio && SessionManager.isLoggedIn) {
       final isEnabled = await SessionManager.isBiometricEnabled();
@@ -41,13 +54,52 @@ class _LoginScreenState extends State<LoginScreen> {
   }
 
   Future<void> _triggerBiometricLogin() async {
-    final success = await AuthService.authenticateBiometric();
-    if (success && mounted) {
-      Navigator.of(context).pushAndRemoveUntil(
-        MaterialPageRoute(builder: (_) => const HomeShell()),
-        (route) => false,
+    final savedUser = await SessionManager.getSavedBiometricUser();
+    if (savedUser == null) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'Chưa có tài khoản nào liên kết vân tay trên máy này. Vui lòng đăng nhập bằng mật khẩu lần đầu tiên!',
+          ),
+          backgroundColor: AppTheme.statusWarning,
+        ),
       );
+      return;
     }
+
+    final success = await AuthService.authenticateBiometric();
+    if (!success || !mounted) return;
+
+    final restored = await SessionManager.restoreBiometricSession();
+    if (!mounted) return;
+
+    if (!restored) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'Phiên đăng nhập sinh trắc học đã hết hạn. Vui lòng đăng nhập lại bằng mật khẩu.',
+          ),
+          backgroundColor: AppTheme.statusAlarm,
+        ),
+      );
+      return;
+    }
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          'Xin chào ${savedUser.username} (${savedUser.role})! Đăng nhập vân tay thành công.',
+        ),
+        backgroundColor: AppTheme.statusArmed,
+        duration: const Duration(seconds: 2),
+      ),
+    );
+
+    Navigator.of(context).pushAndRemoveUntil(
+      MaterialPageRoute(builder: (_) => const HomeShell()),
+      (route) => false,
+    );
   }
 
   Future<void> _submitLogin() async {
@@ -148,6 +200,10 @@ class _LoginScreenState extends State<LoginScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final bioLabel = _savedBioUser != null
+        ? 'Đăng nhập vân tay (${_savedBioUser!.username})'
+        : 'Đăng nhập bằng Sinh trắc học';
+
     return Scaffold(
       backgroundColor: AppTheme.creamBg,
       appBar: AppBar(
@@ -191,7 +247,6 @@ class _LoginScreenState extends State<LoginScreen> {
               ),
               const SizedBox(height: 20),
 
-              // Cute Capybara Mascot Avatar (matches image design)
               Center(
                 child: Container(
                   width: 110,
@@ -310,7 +365,7 @@ class _LoginScreenState extends State<LoginScreen> {
               const SizedBox(height: 16),
 
               // Social or Biometric
-              Center(
+              const Center(
                 child: Text('hoặc', style: TextStyle(color: AppTheme.secondaryText, fontSize: 13)),
               ),
               const SizedBox(height: 12),
@@ -318,7 +373,10 @@ class _LoginScreenState extends State<LoginScreen> {
               OutlinedButton.icon(
                 onPressed: _deviceSupportsBiometric ? _triggerBiometricLogin : null,
                 icon: const Icon(Icons.fingerprint, color: AppTheme.primaryNavy, size: 24),
-                label: const Text('Đăng nhập bằng Sinh trắc học', style: TextStyle(color: AppTheme.primaryNavy, fontWeight: FontWeight.bold)),
+                label: Text(
+                  bioLabel,
+                  style: const TextStyle(color: AppTheme.primaryNavy, fontWeight: FontWeight.bold),
+                ),
                 style: OutlinedButton.styleFrom(
                   backgroundColor: AppTheme.cardWhite,
                   side: const BorderSide(color: AppTheme.borderWarm),

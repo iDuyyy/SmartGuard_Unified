@@ -1,15 +1,17 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 import 'dart:math';
 import 'package:flutter/foundation.dart';
+import 'package:http/http.dart' as http;
 import 'package:sensors_plus/sensors_plus.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:vibration/vibration.dart';
 import '../services/emergency_service.dart';
 import '../services/foreground_service_controller.dart';
 import '../services/sound_classifier_service.dart';
 import '../services/tts_service.dart';
 import '../core/api_client.dart';
-import '../models/models.dart';
 
 // ─── Alert Severity ────────────────────────────────────────────────────────
 enum AlertSeverity { low, medium, high, critical }
@@ -202,7 +204,20 @@ class SensorFusionService {
 class AlertOrchestrator {
   static bool _isDispatching = false;
   static DateTime? _lastDispatch;
-  static const int _cooldownSeconds = 30;
+  static const int _cooldownSeconds = 20;
+
+  /// Dừng toàn bộ còi báo động, giọng nói TTS và rung ngay lập tức
+  static Future<void> stopAllAlarms() async {
+    _isDispatching = false;
+    try {
+      await TtsService.stop();
+    } catch (_) {}
+    try {
+      if (!kIsWeb && Platform.isAndroid) {
+        await Vibration.cancel();
+      }
+    } catch (_) {}
+  }
 
   /// Kích hoạt chuỗi báo động đầy đủ.
   /// [postToServer] = false khi nơi gọi đã tự POST /api/alerts/trigger
@@ -253,6 +268,13 @@ class AlertOrchestrator {
         await _postAlertToServer(fusion: fusion, deviceId: deviceId);
       }
 
+      // 4b. Gửi dự phòng trực tiếp tới Discord Webhook đã lưu trên máy (nếu có)
+      await _sendDirectDiscordIfConfigured(
+        deviceName: deviceName,
+        reason: fusion.reason,
+        severity: fusion.level == AlertSeverity.critical ? 'Critical' : 'Warning',
+      );
+
       // 5. Gọi điện khẩn cấp
       await _callEmergencyContacts(fusion: fusion);
 
@@ -269,15 +291,13 @@ class AlertOrchestrator {
     required FusionResult fusion,
     required String deviceId,
   }) async {
-    // Backend yêu cầu DeviceId là Guid hợp lệ (TriggerAlertDto)
     final guid = RegExp(r'^[0-9a-fA-F]{8}-([0-9a-fA-F]{4}-){3}[0-9a-fA-F]{12}$');
-    if (!guid.hasMatch(deviceId)) {
-      debugPrint('[AlertOrchestrator] Bỏ qua POST: deviceId không hợp lệ ($deviceId)');
-      return;
-    }
+    final validDeviceId = guid.hasMatch(deviceId)
+        ? deviceId
+        : '00000000-0000-0000-0000-000000000000';
     try {
       await ApiClient.request('POST', '/api/alerts/trigger', body: {
-        'deviceId': deviceId,
+        'deviceId': validDeviceId,
         'triggerReason': fusion.breakdown['sound'] != null &&
                 fusion.breakdown['sound']! >= (fusion.breakdown['motion'] ?? 0)
             ? 'TIENG_DONG'
@@ -290,24 +310,48 @@ class AlertOrchestrator {
     }
   }
 
+  static Future<void> _sendDirectDiscordIfConfigured({
+    required String deviceName,
+    required String reason,
+    required String severity,
+  }) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final webhookUrl = prefs.getString('sg_discord_webhook_url')?.trim() ?? '';
+      if (webhookUrl.isEmpty || !webhookUrl.startsWith('http')) return;
+
+      final now = DateTime.now();
+      final timeStr =
+          '${now.hour.toString().padLeft(2, '0')}:${now.minute.toString().padLeft(2, '0')}:${now.second.toString().padLeft(2, '0')} '
+          '${now.day.toString().padLeft(2, '0')}/${now.month.toString().padLeft(2, '0')}/${now.year}';
+
+      await http.post(
+        Uri.parse(webhookUrl),
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({
+          'content': '🚨 **CẢNH BÁO AN NINH SMARTGUARD**: Thiết bị **$deviceName** phát hiện **$reason** lúc `$timeStr`!',
+          'embeds': [
+            {
+              'title': '🚨 CẢNH BÁO PHÁT HIỆN XÂM NHẬP',
+              'description':
+                  '**Thiết bị:** $deviceName\n**Sự kiện:** $reason\n**Mức độ:** $severity\n**Thời gian (VN):** $timeStr',
+              'color': severity == 'Critical' ? 16711680 : 16744448,
+            }
+          ]
+        }),
+      );
+    } catch (_) {}
+  }
+
   static Future<void> _callEmergencyContacts({
     required FusionResult fusion,
   }) async {
     try {
-      final result = await EmergencyService.dispatchEmergencyAlert(
-        reason: fusion.reason,
-        location: 'SmartGuard App',
-      );
-
-      final callList = result['callList'] as List<EmergencyContactModel>? ?? [];
-      if (callList.isNotEmpty) {
-        final hasPermission =
-            await ForegroundServiceController.checkCallPermission();
-        if (hasPermission) {
-          await ForegroundServiceController.callEmergency(
-            callList.first.phone,
-          );
-        }
+      final primary = await EmergencyService.getPrimaryCallContact();
+      if (primary != null && primary.phone.trim().isNotEmpty) {
+        await ForegroundServiceController.callEmergency(
+          primary.phone.trim(),
+        );
       }
     } catch (e) {
       debugPrint('[AlertOrchestrator] Emergency dispatch failed: $e');

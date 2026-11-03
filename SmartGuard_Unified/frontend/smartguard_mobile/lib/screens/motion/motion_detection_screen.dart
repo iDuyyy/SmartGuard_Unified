@@ -172,18 +172,43 @@ class _MotionDetectionScreenState extends State<MotionDetectionScreen>
     _fusionSub = null;
     _soundSub = null;
     _ampSub = null;
+    _rawAccelSub = null;
     _fusion.stop();
     _sound.stop();
     _waveTimer?.cancel();
+    AlertOrchestrator.stopAllAlarms();
     ForegroundServiceController.stopService();
+    if (mounted) {
+      setState(() {
+        _currentMotionScore = 0.0;
+        _currentSoundScore = 0.0;
+        _currentSoundLabel = 'Silence';
+        _fusedScore = 0.0;
+        _severity = AlertSeverity.low;
+      });
+    }
   }
 
   void _toggleMonitoring() {
     setState(() => _isMonitoringActive = !_isMonitoringActive);
     if (_isMonitoringActive) {
       _startMonitoring();
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('🛡️ Đã BẬT cảm biến chuyển động & âm thanh AI!'),
+          backgroundColor: AppTheme.statusArmed,
+          duration: Duration(seconds: 2),
+        ),
+      );
     } else {
       _stopMonitoring();
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('🔕 Đã TẮT cảm biến & dừng mọi còi cảnh báo!'),
+          backgroundColor: AppTheme.statusWarning,
+          duration: Duration(seconds: 2),
+        ),
+      );
     }
     _savePrefs();
   }
@@ -419,6 +444,26 @@ class _MotionDetectionScreenState extends State<MotionDetectionScreen>
                 ),
               ],
             ),
+          ),
+          IconButton(
+            tooltip: 'Tắt còi cảnh báo ngay',
+            onPressed: () async {
+              await AlertOrchestrator.stopAllAlarms();
+              if (mounted) {
+                setState(() {
+                  _severity = AlertSeverity.low;
+                  _fusedScore = 0.0;
+                });
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(
+                    content: Text('🔕 Đã tắt ngay còi báo động và rung!'),
+                    backgroundColor: AppTheme.statusArmed,
+                    duration: Duration(seconds: 2),
+                  ),
+                );
+              }
+            },
+            icon: const Icon(Icons.volume_off_rounded, color: AppTheme.statusAlarm),
           ),
           Switch.adaptive(
             value: _isMonitoringActive,

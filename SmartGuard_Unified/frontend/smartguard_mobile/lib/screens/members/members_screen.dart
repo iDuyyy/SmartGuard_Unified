@@ -92,7 +92,7 @@ class _MembersScreenState extends State<MembersScreen> with SingleTickerProvider
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
                 const Text(
-                  'Hệ thống SmartGuard sẽ tự động gọi điện hoặc gửi tin nhắn SMS khi phát hiện có kẻ gian đột nhập.',
+                  'Người thân mới thêm sẽ được đặt lên đầu danh sách làm Số ưu tiên gọi khẩn cấp #1 khi phát hiện đột nhập.',
                   style: TextStyle(fontSize: 12, color: AppTheme.textSecondary),
                 ),
                 const SizedBox(height: 14),
@@ -179,7 +179,7 @@ class _MembersScreenState extends State<MembersScreen> with SingleTickerProvider
                 if (mounted) {
                   ScaffoldMessenger.of(context).showSnackBar(
                     SnackBar(
-                      content: Text('Đã thêm $name vào danh sách báo khẩn cấp'),
+                      content: Text('Đã thêm $name ($phone) làm số gọi khẩn cấp ưu tiên #1!'),
                       backgroundColor: AppTheme.statusArmed,
                     ),
                   );
@@ -206,60 +206,28 @@ class _MembersScreenState extends State<MembersScreen> with SingleTickerProvider
     }
   }
 
-  Future<void> _testEmergencyAlert(EmergencyContactModel c) async {
-    final result = await EmergencyService.dispatchEmergencyAlert(
-      reason: 'Báo động thử nghiệm từ ứng dụng SmartGuard',
-    );
-
+  Future<void> _setPrimaryContact(EmergencyContactModel c) async {
+    await EmergencyService.setPrimaryContact(c.id);
+    await _loadEmergencyContacts();
     if (mounted) {
-      showDialog(
-        context: context,
-        builder: (ctx) => AlertDialog(
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-          title: const Row(
-            children: [
-              Icon(Icons.phone_in_talk, color: Color(0xFF10B981)),
-              SizedBox(width: 8),
-              Text('Đã kết nối khẩn cấp!'),
-            ],
-          ),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text('Hệ thống đã giả lập quay số tự động đến ${c.name} (${c.phone}).'),
-              const SizedBox(height: 8),
-              Container(
-                padding: const EdgeInsets.all(10),
-                decoration: BoxDecoration(
-                  color: AppTheme.creamBg,
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                child: Text(
-                  result['summary']?.toString() ?? 'Tín hiệu viễn thông đang sẵn sàng phản hồi sự cố.',
-                  style: const TextStyle(fontSize: 12, color: AppTheme.textSecondary),
-                ),
-              ),
-            ],
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(ctx),
-              child: const Text('Đóng', style: TextStyle(color: AppTheme.textSecondary)),
-            ),
-            ElevatedButton.icon(
-              style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF10B981)),
-              icon: const Icon(Icons.call, color: Colors.white, size: 18),
-              label: const Text('Gọi ngay qua SIM', style: TextStyle(color: Colors.white)),
-              onPressed: () async {
-                Navigator.pop(ctx);
-                await ForegroundServiceController.callEmergency(c.phone);
-              },
-            ),
-          ],
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('⭐ Đã đặt ${c.name} (${c.phone}) làm số gọi khẩn cấp ưu tiên #1!'),
+          backgroundColor: AppTheme.statusArmed,
         ),
       );
     }
+  }
+
+  Future<void> _testEmergencyAlert(EmergencyContactModel c) async {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text('📞 Đang gọi điện khẩn cấp tới ${c.name} (${c.phone})...'),
+        backgroundColor: AppTheme.statusArmed,
+        duration: const Duration(seconds: 2),
+      ),
+    );
+    await ForegroundServiceController.callEmergency(c.phone);
   }
 
   @override
@@ -269,7 +237,6 @@ class _MembersScreenState extends State<MembersScreen> with SingleTickerProvider
       body: SafeArea(
         child: Column(
           children: [
-            // Top App Bar matching Mockup "Thành viên"
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
               child: Row(
@@ -312,7 +279,6 @@ class _MembersScreenState extends State<MembersScreen> with SingleTickerProvider
               ),
             ),
 
-            // Tab Bar: Người thân khẩn cấp & Tài khoản chia sẻ
             TabBar(
               controller: _tabCtrl,
               indicatorColor: AppTheme.coralPink,
@@ -325,14 +291,13 @@ class _MembersScreenState extends State<MembersScreen> with SingleTickerProvider
                 ),
                 Tab(
                   icon: const Icon(Icons.app_registration),
-                  text: 'Chia sẻ tài khoản (${_sharedMembers.length})',
+                  text: 'Chia sẻ camera (${_sharedMembers.length})',
                 ),
               ],
             ),
 
             const SizedBox(height: 8),
 
-            // Body
             Expanded(
               child: TabBarView(
                 controller: _tabCtrl,
@@ -343,7 +308,6 @@ class _MembersScreenState extends State<MembersScreen> with SingleTickerProvider
               ),
             ),
 
-            // Cute Baby Capybaras illustration at the bottom (matching mockup!)
             Padding(
               padding: const EdgeInsets.symmetric(vertical: 8),
               child: Image.asset(
@@ -357,7 +321,6 @@ class _MembersScreenState extends State<MembersScreen> with SingleTickerProvider
               ),
             ),
 
-            // Bottom Add Button
             Padding(
               padding: const EdgeInsets.all(16),
               child: SizedBox(
@@ -425,7 +388,7 @@ class _MembersScreenState extends State<MembersScreen> with SingleTickerProvider
               ),
               const SizedBox(height: 6),
               const Text(
-                'Thêm số điện thoại người thân để hệ thống tự động gọi điện hoặc gửi SMS khi phát hiện đột nhập.',
+                'Thêm số điện thoại người thân để hệ thống tự động gọi điện ngay khi phát hiện đột nhập hoặc rung lắc mạnh.',
                 textAlign: TextAlign.center,
                 style: TextStyle(fontSize: 13, color: AppTheme.textSecondary),
               ),
@@ -441,13 +404,17 @@ class _MembersScreenState extends State<MembersScreen> with SingleTickerProvider
       itemBuilder: (ctx, index) {
         final c = _contacts[index];
         final isOwner = c.relationship == 'Chủ nhà';
+        final isPrimary = index == 0;
 
         return Container(
           margin: const EdgeInsets.only(bottom: 10),
           decoration: BoxDecoration(
             color: Colors.white,
             borderRadius: BorderRadius.circular(20),
-            border: Border.all(color: AppTheme.borderWarm),
+            border: Border.all(
+              color: isPrimary ? const Color(0xFF10B981) : AppTheme.borderWarm,
+              width: isPrimary ? 1.5 : 1.0,
+            ),
             boxShadow: [
               BoxShadow(
                 color: Colors.black.withValues(alpha: 0.03),
@@ -460,7 +427,6 @@ class _MembersScreenState extends State<MembersScreen> with SingleTickerProvider
             padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
             child: Row(
               children: [
-                // Avatar
                 CircleAvatar(
                   radius: 24,
                   backgroundColor: isOwner ? const Color(0xFFDCE8F3) : const Color(0xFFFFECE8),
@@ -475,26 +441,23 @@ class _MembersScreenState extends State<MembersScreen> with SingleTickerProvider
                 ),
                 const SizedBox(width: 14),
 
-                // Name and relationship badge
                 Expanded(
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Row(
+                      Wrap(
+                        spacing: 6,
+                        runSpacing: 4,
+                        crossAxisAlignment: WrapCrossAlignment.center,
                         children: [
-                          Flexible(
-                            child: Text(
-                              c.name,
-                              style: const TextStyle(
-                                fontSize: 15,
-                                fontWeight: FontWeight.bold,
-                                color: AppTheme.textPrimary,
-                              ),
-                              overflow: TextOverflow.ellipsis,
+                          Text(
+                            c.name,
+                            style: const TextStyle(
+                              fontSize: 15,
+                              fontWeight: FontWeight.bold,
+                              color: AppTheme.textPrimary,
                             ),
                           ),
-                          const SizedBox(width: 8),
-                          // Badge matching mockup
                           Container(
                             padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
                             decoration: BoxDecoration(
@@ -510,31 +473,68 @@ class _MembersScreenState extends State<MembersScreen> with SingleTickerProvider
                               ),
                             ),
                           ),
+                          if (isPrimary)
+                            Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+                              decoration: BoxDecoration(
+                                color: const Color(0xFF10B981).withValues(alpha: 0.15),
+                                borderRadius: BorderRadius.circular(8),
+                              ),
+                              child: const Text(
+                                '⭐ Ưu tiên gọi #1',
+                                style: TextStyle(
+                                  fontSize: 10,
+                                  fontWeight: FontWeight.bold,
+                                  color: Color(0xFF059669),
+                                ),
+                              ),
+                            ),
                         ],
                       ),
                       const SizedBox(height: 4),
                       Text(
-                        c.phone,
-                        style: const TextStyle(fontSize: 13, color: AppTheme.textSecondary),
+                        '📞 ${c.phone}',
+                        style: const TextStyle(fontSize: 13, color: AppTheme.textSecondary, fontWeight: FontWeight.w600),
                       ),
                     ],
                   ),
                 ),
 
-                // Call test button
                 IconButton(
-                  icon: const Icon(Icons.phone_forwarded, color: Color(0xFF10B981)),
-                  tooltip: 'Thử nghiệm gọi tự động',
+                  icon: const Icon(Icons.phone_in_talk, color: Color(0xFF10B981)),
+                  tooltip: 'Gọi thử ngay cho ${c.name}',
                   onPressed: () => _testEmergencyAlert(c),
                 ),
 
-                // Popup menu for delete
                 PopupMenuButton<String>(
                   icon: const Icon(Icons.more_vert, color: AppTheme.textSecondary, size: 20),
                   onSelected: (val) {
+                    if (val == 'primary') _setPrimaryContact(c);
+                    if (val == 'call') _testEmergencyAlert(c);
                     if (val == 'delete') _deleteContact(c);
                   },
                   itemBuilder: (ctx) => [
+                    if (!isPrimary)
+                      const PopupMenuItem(
+                        value: 'primary',
+                        child: Row(
+                          children: [
+                            Icon(Icons.star_rounded, color: Color(0xFFF59E0B), size: 18),
+                            SizedBox(width: 8),
+                            Text('Đặt làm số gọi ưu tiên #1'),
+                          ],
+                        ),
+                      ),
+                    const PopupMenuItem(
+                      value: 'call',
+                      child: Row(
+                        children: [
+                          Icon(Icons.call, color: Color(0xFF10B981), size: 18),
+                          SizedBox(width: 8),
+                          Text('Gọi thử ngay'),
+                        ],
+                      ),
+                    ),
                     const PopupMenuItem(
                       value: 'delete',
                       child: Row(
@@ -570,146 +570,151 @@ class _MembersScreenState extends State<MembersScreen> with SingleTickerProvider
                 style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: AppTheme.textPrimary),
               ),
               const SizedBox(height: 6),
-                  const Text(
-                    'Bạn có thể cấp quyền truy cập camera cho người thân qua email đăng ký.',
-                    textAlign: TextAlign.center,
-                    style: TextStyle(fontSize: 13, color: AppTheme.textSecondary),
-                  ),
-                  const SizedBox(height: 16),
-                  OutlinedButton.icon(
-                    onPressed: _showShareAccountDialog,
-                    icon: const Icon(Icons.share),
-                    label: const Text('Chia sẻ qua Email'),
-                  ),
-                ],
+              const Text(
+                'Nhập Email tài khoản của người thân đã đăng ký để chia sẻ quyền xem camera và tắt chuông cảnh báo (không cần mật khẩu).',
+                textAlign: TextAlign.center,
+                style: TextStyle(fontSize: 13, color: AppTheme.textSecondary),
               ),
-            ),
-          );
-        }
+              const SizedBox(height: 16),
+              OutlinedButton.icon(
+                onPressed: _showShareAccountDialog,
+                icon: const Icon(Icons.share),
+                label: const Text('Cấp quyền qua Email'),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
 
-        return Column(
-          children: [
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
-              child: Align(
-                alignment: Alignment.centerRight,
-                child: TextButton.icon(
-                  onPressed: _showShareAccountDialog,
-                  icon: const Icon(Icons.person_add_alt, size: 18),
-                  label: const Text('Chia sẻ thêm tài khoản'),
-                ),
-              ),
-            ),
-            Expanded(
-              child: ListView.builder(
-                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
-                itemCount: _sharedMembers.length,
-                itemBuilder: (ctx, i) {
-                  final m = _sharedMembers[i];
-                  return Card(
-                    margin: const EdgeInsets.only(bottom: 10),
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
-                    child: ListTile(
-                      leading: const CircleAvatar(
-                        backgroundColor: Color(0xFFEDE9FE),
-                        child: Icon(Icons.person, color: AppTheme.royalPurple),
-                      ),
-                      title: Text(m.memberEmail, style: const TextStyle(fontWeight: FontWeight.bold)),
-                      subtitle: Text('Tên: ${m.memberUsername} • Quyền: ${m.deviceName ?? "Toàn bộ camera"}'),
-                      trailing: IconButton(
-                        icon: const Icon(Icons.delete_outline, color: AppTheme.coralPink),
-                        tooltip: 'Thu hồi quyền truy cập',
-                        onPressed: () => _revokeSharedMember(m),
-                      ),
-                    ),
-                  );
-                },
-              ),
-            ),
-          ],
-        );
-      }
-
-      Future<void> _showShareAccountDialog() async {
-        final emailCtrl = TextEditingController();
-        bool canAck = true;
-        await showDialog(
-          context: context,
-          builder: (ctx) => StatefulBuilder(
-            builder: (ctx, setDlg) => AlertDialog(
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-              title: const Text('Chia sẻ quyền truy cập', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
-              content: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  TextField(
-                    controller: emailCtrl,
-                    keyboardType: TextInputType.emailAddress,
-                    decoration: const InputDecoration(
-                      labelText: 'Email tài khoản người thân *',
-                      prefixIcon: Icon(Icons.email_outlined),
-                    ),
-                  ),
-                  const SizedBox(height: 12),
-                  SwitchListTile(
-                    contentPadding: EdgeInsets.zero,
-                    title: const Text('Cho phép tắt chuông / xác nhận cảnh báo', style: TextStyle(fontSize: 13)),
-                    value: canAck,
-                    activeColor: AppTheme.coralPink,
-                    onChanged: (v) => setDlg(() => canAck = v),
-                  ),
-                ],
-              ),
-              actions: [
-                TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Hủy')),
-                ElevatedButton(
-                  style: ElevatedButton.styleFrom(backgroundColor: AppTheme.coralPink, foregroundColor: Colors.white),
-                  onPressed: () async {
-                    final email = emailCtrl.text.trim();
-                    if (email.isEmpty) return;
-                    Navigator.pop(ctx);
-                    try {
-                      await ApiClient.request('POST', '/api/members/share', body: {
-                        'memberEmail': email,
-                        'canAcknowledge': canAck,
-                      });
-                      await _loadSharedMembers();
-                      if (mounted) {
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          SnackBar(content: Text('Đã chia sẻ quyền truy cập cho $email'), backgroundColor: AppTheme.statusArmed),
-                        );
-                      }
-                    } catch (e) {
-                      if (mounted) {
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          SnackBar(content: Text('$e'), backgroundColor: AppTheme.statusAlarm),
-                        );
-                      }
-                    }
-                  },
-                  child: const Text('Chia sẻ'),
-                ),
-              ],
+    return Column(
+      children: [
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+          child: Align(
+            alignment: Alignment.centerRight,
+            child: TextButton.icon(
+              onPressed: _showShareAccountDialog,
+              icon: const Icon(Icons.person_add_alt, size: 18),
+              label: const Text('Cấp quyền thêm qua Email'),
             ),
           ),
+        ),
+        Expanded(
+          child: ListView.builder(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+            itemCount: _sharedMembers.length,
+            itemBuilder: (ctx, i) {
+              final m = _sharedMembers[i];
+              return Card(
+                margin: const EdgeInsets.only(bottom: 10),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
+                child: ListTile(
+                  leading: const CircleAvatar(
+                    backgroundColor: Color(0xFFEDE9FE),
+                    child: Icon(Icons.person, color: AppTheme.royalPurple),
+                  ),
+                  title: Text(m.memberEmail, style: const TextStyle(fontWeight: FontWeight.bold)),
+                  subtitle: Text('Tên: ${m.memberUsername} • Quyền: ${m.deviceName ?? "Toàn bộ camera"}'),
+                  trailing: IconButton(
+                    icon: const Icon(Icons.delete_outline, color: AppTheme.coralPink),
+                    tooltip: 'Thu hồi quyền truy cập',
+                    onPressed: () => _revokeSharedMember(m),
+                  ),
+                ),
+              );
+            },
+          ),
+        ),
+      ],
+    );
+  }
+
+  Future<void> _showShareAccountDialog() async {
+    final emailCtrl = TextEditingController();
+    bool canAck = true;
+    await showDialog(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setDlg) => AlertDialog(
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+          title: const Text('Cấp quyền Camera qua Email', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Text(
+                'Chỉ cần nhập Email tài khoản người thân đã đăng ký trên SmartGuard (không cần mật khẩu).',
+                style: TextStyle(fontSize: 12, color: AppTheme.textSecondary),
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: emailCtrl,
+                keyboardType: TextInputType.emailAddress,
+                decoration: const InputDecoration(
+                  labelText: 'Email tài khoản người thân *',
+                  prefixIcon: Icon(Icons.email_outlined),
+                ),
+              ),
+              const SizedBox(height: 12),
+              SwitchListTile(
+                contentPadding: EdgeInsets.zero,
+                title: const Text('Cho phép tắt chuông / xác nhận cảnh báo', style: TextStyle(fontSize: 13)),
+                value: canAck,
+                activeColor: AppTheme.coralPink,
+                onChanged: (v) => setDlg(() => canAck = v),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Hủy')),
+            ElevatedButton(
+              style: ElevatedButton.styleFrom(backgroundColor: AppTheme.coralPink, foregroundColor: Colors.white),
+              onPressed: () async {
+                final email = emailCtrl.text.trim();
+                if (email.isEmpty) return;
+                Navigator.pop(ctx);
+                try {
+                  await ApiClient.request('POST', '/api/members/share', body: {
+                    'memberEmail': email,
+                    'canAcknowledge': canAck,
+                  });
+                  await _loadSharedMembers();
+                  if (mounted) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(content: Text('Đã cấp quyền truy cập cho $email'), backgroundColor: AppTheme.statusArmed),
+                    );
+                  }
+                } catch (e) {
+                  if (mounted) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(content: Text('$e'), backgroundColor: AppTheme.statusAlarm),
+                    );
+                  }
+                }
+              },
+              child: const Text('Cấp quyền'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _revokeSharedMember(MemberModel m) async {
+    try {
+      await ApiClient.request('DELETE', '/api/members/${m.id}');
+      await _loadSharedMembers();
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Đã thu hồi quyền của ${m.memberEmail}'), backgroundColor: AppTheme.statusArmed),
         );
       }
-
-      Future<void> _revokeSharedMember(MemberModel m) async {
-        try {
-          await ApiClient.request('DELETE', '/api/members/${m.id}');
-          await _loadSharedMembers();
-          if (mounted) {
-            ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(content: Text('Đã thu hồi quyền của ${m.memberEmail}'), backgroundColor: AppTheme.statusArmed),
-            );
-          }
-        } catch (e) {
-          if (mounted) {
-            ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(content: Text('$e'), backgroundColor: AppTheme.statusAlarm),
-            );
-          }
-        }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('$e'), backgroundColor: AppTheme.statusAlarm),
+        );
       }
+    }
+  }
 }

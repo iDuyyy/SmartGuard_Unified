@@ -1,3 +1,25 @@
+DateTime? _parseNullableUtcToLocal(dynamic raw) {
+  if (raw == null) return null;
+  final s = raw.toString().trim();
+  if (s.isEmpty) return null;
+
+  // Nếu chuỗi ISO từ SQL Server (DATETIME2) chưa có hậu tố múi giờ ('Z' hoặc '+/-HH:mm'),
+  // tự động thêm 'Z' vì Backend luôn lưu DateTime.UtcNow, sau đó đổi về giờ địa phương (.toLocal())
+  final hasTimezone = s.endsWith('Z') ||
+      s.endsWith('z') ||
+      (s.contains('T') &&
+          (s.substring(s.indexOf('T')).contains('+') ||
+              s.substring(s.indexOf('T')).contains('-')));
+
+  final normalized = (s.contains('T') && !hasTimezone) ? '${s}Z' : s;
+  final parsed = DateTime.tryParse(normalized);
+  return parsed?.toLocal();
+}
+
+DateTime _parseUtcToLocal(dynamic raw) {
+  return _parseNullableUtcToLocal(raw) ?? DateTime.now();
+}
+
 class UserModel {
   final String id;
   final String email;
@@ -93,8 +115,8 @@ class DeviceModel {
       isArmed: json['isArmed'] == true,
       noiseThreshold: (json['noiseThreshold'] as num?)?.toDouble() ?? 70.0,
       motionThreshold: (json['motionThreshold'] as num?)?.toDouble() ?? 3.5,
-      registeredAt: DateTime.tryParse(json['registeredAt']?.toString() ?? '') ?? DateTime.now(),
-      lastSeenAt: DateTime.tryParse(json['lastSeenAt']?.toString() ?? '') ?? DateTime.now(),
+      registeredAt: _parseUtcToLocal(json['registeredAt']),
+      lastSeenAt: _parseUtcToLocal(json['lastSeenAt']),
       deviceType: json['deviceType']?.toString() ?? detectedType,
       location: json['zoneName']?.toString() ?? json['location']?.toString() ?? parsedLocation ?? 'Cửa chính',
     );
@@ -154,6 +176,10 @@ class AlertModel {
   });
 
   factory AlertModel.fromJson(Map<String, dynamic> json) {
+    final rawImg = json['imageUrl']?.toString();
+    final validImg = (rawImg != null && rawImg.isNotEmpty && !rawImg.contains('sample_alert.jpg'))
+        ? rawImg
+        : null;
     return AlertModel(
       id: json['id']?.toString() ?? '',
       deviceId: json['deviceId']?.toString() ?? '',
@@ -163,10 +189,10 @@ class AlertModel {
       triggerScore: (json['triggerScore'] as num?)?.toDouble() ?? 0.0,
       severity: json['severity']?.toString() ?? 'Warning',
       status: json['status']?.toString() ?? 'Triggered',
-      imageUrl: json['imageUrl']?.toString(),
+      imageUrl: validImg,
       adaptiveReason: json['adaptiveReason']?.toString(),
-      triggeredAt: DateTime.tryParse(json['triggeredAt']?.toString() ?? '') ?? DateTime.now(),
-      acknowledgedAt: DateTime.tryParse(json['acknowledgedAt']?.toString() ?? ''),
+      triggeredAt: _parseUtcToLocal(json['triggeredAt']),
+      acknowledgedAt: _parseNullableUtcToLocal(json['acknowledgedAt']),
     );
   }
 }
@@ -323,7 +349,7 @@ class AdaptiveProfileModel {
       activeFrom: json['activeFrom']?.toString() ?? '00:00',
       activeTo: json['activeTo']?.toString() ?? '23:59',
       behaviorOnDisconnect: json['behaviorOnDisconnect']?.toString() ?? 'AlertOffline',
-      snoozeUntil: DateTime.tryParse(json['snoozeUntil']?.toString() ?? ''),
+      snoozeUntil: _parseNullableUtcToLocal(json['snoozeUntil']),
       isSnoozed: json['isSnoozed'] == true,
       zoneRules: rawRules.map((e) => AdaptiveZoneRuleModel.fromJson(e as Map<String, dynamic>)).toList(),
     );
@@ -354,7 +380,7 @@ class ImageItemModel {
       alertEventId: json['alertEventId']?.toString(),
       fileName: json['fileName']?.toString() ?? '',
       relativeUrl: json['relativeUrl']?.toString() ?? '',
-      uploadedAt: DateTime.tryParse(json['uploadedAt']?.toString() ?? '') ?? DateTime.now(),
+      uploadedAt: _parseUtcToLocal(json['uploadedAt']),
     );
   }
 }
@@ -380,7 +406,7 @@ class KnownPersonModel {
       name: json['name']?.toString() ?? '',
       photoPath: json['photoPath']?.toString(),
       photoUrl: json['photoUrl']?.toString(),
-      registeredAt: DateTime.tryParse(json['registeredAt']?.toString() ?? '') ?? DateTime.now(),
+      registeredAt: _parseUtcToLocal(json['registeredAt']),
     );
   }
 

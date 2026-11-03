@@ -47,14 +47,12 @@ class MainActivity : FlutterFragmentActivity() {
             CHANNEL_FOREGROUND
         ).setMethodCallHandler { call, result ->
             when (call.method) {
-                // Lưu ý: tất cả trả về Boolean để khớp với invokeMethod<bool> phía Dart
                 "startService" -> {
                     Log.i(TAG, "Flutter → startForegroundService")
                     try {
                         SmartGuardForegroundService.startService(applicationContext)
                         result.success(true)
                     } catch (e: Exception) {
-                        // Android 12+: ForegroundServiceStartNotAllowedException khi app ở nền
                         Log.e(TAG, "Không thể khởi động service: ${e.message}")
                         result.success(false)
                     }
@@ -92,7 +90,6 @@ class MainActivity : FlutterFragmentActivity() {
                         result.error("INVALID_NUMBER", "Số điện thoại không hợp lệ", null)
                         return@setMethodCallHandler
                     }
-                    // true = đã khởi tạo cuộc gọi, false = thiếu quyền / lỗi
                     result.success(makePhoneCall(phoneNumber))
                 }
                 "requestCallPermission" -> {
@@ -119,7 +116,6 @@ class MainActivity : FlutterFragmentActivity() {
                     requestAllRequiredPermissions()
                     result.success(true)
                 }
-                // ── Battery Optimization (Doze Mode) ──────────────────────────
                 "isIgnoringBatteryOptimizations" -> {
                     result.success(isIgnoringBatteryOptimizations())
                 }
@@ -144,23 +140,14 @@ class MainActivity : FlutterFragmentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        // Tự động xin các quyền cần thiết khi app mở lần đầu
         requestAllRequiredPermissions()
     }
 
-    // ═══ Private Helpers ═══════════════════════════════════════════════
-
-    /** Ứng dụng đã nằm trong danh sách ngoại lệ tối ưu pin (Doze) chưa */
     private fun isIgnoringBatteryOptimizations(): Boolean {
         val pm = getSystemService(Context.POWER_SERVICE) as PowerManager
         return pm.isIgnoringBatteryOptimizations(packageName)
     }
 
-    /**
-     * Mở hộp thoại hệ thống xin bỏ qua tối ưu pin cho riêng SmartGuard.
-     * Cần quyền REQUEST_IGNORE_BATTERY_OPTIMIZATIONS (đã khai báo trong Manifest).
-     * Nếu ROM không hỗ trợ hộp thoại trực tiếp → mở trang cài đặt danh sách ứng dụng.
-     */
     private fun requestBatteryExemption(): Boolean {
         if (isIgnoringBatteryOptimizations()) return true
         return try {
@@ -186,32 +173,44 @@ class MainActivity : FlutterFragmentActivity() {
     }
 
     /**
-     * Thực hiện gọi điện trực tiếp qua SIM (CALL_PHONE permission required)
-     * Trả về true nếu cuộc gọi được khởi tạo thành công, false nếu thiếu quyền
+     * Thực hiện gọi điện trực tiếp qua SIM (Intent.ACTION_CALL).
+     * Nếu thiết bị chưa cấp quyền CALL_PHONE hoặc bị chặn, tự động mở trình quay số (Intent.ACTION_DIAL)
+     * với số điện thoại người thân đã điền sẵn và yêu cầu cấp quyền CALL_PHONE.
      */
     private fun makePhoneCall(phoneNumber: String): Boolean {
+        val cleanNumber = phoneNumber.replace("[^0-9+]".toRegex(), "")
+        if (cleanNumber.isEmpty()) return false
+
+        val callUri = Uri.parse("tel:$cleanNumber")
         val hasPermission = ContextCompat.checkSelfPermission(
             this, Manifest.permission.CALL_PHONE
         ) == PackageManager.PERMISSION_GRANTED
 
-        return if (hasPermission) {
+        if (hasPermission) {
             try {
-                // Chuẩn hóa số điện thoại – loại bỏ khoảng trắng
-                val cleanNumber = phoneNumber.replace("\\s".toRegex(), "")
-                val callUri = Uri.parse("tel:$cleanNumber")
                 val callIntent = Intent(Intent.ACTION_CALL, callUri).apply {
                     flags = Intent.FLAG_ACTIVITY_NEW_TASK
                 }
                 startActivity(callIntent)
-                Log.i(TAG, "📞 Đã khởi tạo cuộc gọi khẩn cấp đến: $cleanNumber")
-                true
+                Log.i(TAG, "📞 Đã khởi tạo cuộc gọi khẩn cấp trực tiếp đến: $cleanNumber")
+                return true
             } catch (e: Exception) {
-                Log.e(TAG, "Lỗi khi gọi điện: ${e.message}")
-                false
+                Log.e(TAG, "Lỗi ACTION_CALL, chuyển sang ACTION_DIAL: ${e.message}")
             }
         } else {
-            Log.w(TAG, "CALL_PHONE permission chưa được cấp – yêu cầu quyền...")
+            Log.w(TAG, "CALL_PHONE chưa cấp – yêu cầu quyền và mở màn hình gọi điện...")
             requestCallPermissionIfNeeded()
+        }
+
+        // Fallback an toàn: Mở màn hình cuộc gọi với số người thân đã điền sẵn
+        return try {
+            val dialIntent = Intent(Intent.ACTION_DIAL, callUri).apply {
+                flags = Intent.FLAG_ACTIVITY_NEW_TASK
+            }
+            startActivity(dialIntent)
+            true
+        } catch (e: Exception) {
+            Log.e(TAG, "Không thể mở trình gọi điện: ${e.message}")
             false
         }
     }
@@ -232,26 +231,21 @@ class MainActivity : FlutterFragmentActivity() {
     private fun requestAllRequiredPermissions() {
         val permissionsNeeded = mutableListOf<String>()
 
-        // Camera & Mic
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA)
             != PackageManager.PERMISSION_GRANTED) permissionsNeeded.add(Manifest.permission.CAMERA)
 
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO)
             != PackageManager.PERMISSION_GRANTED) permissionsNeeded.add(Manifest.permission.RECORD_AUDIO)
 
-        // Call Phone
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.CALL_PHONE)
             != PackageManager.PERMISSION_GRANTED) permissionsNeeded.add(Manifest.permission.CALL_PHONE)
 
-        // Read Phone State
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.READ_PHONE_STATE)
             != PackageManager.PERMISSION_GRANTED) permissionsNeeded.add(Manifest.permission.READ_PHONE_STATE)
 
-        // Send SMS
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.SEND_SMS)
             != PackageManager.PERMISSION_GRANTED) permissionsNeeded.add(Manifest.permission.SEND_SMS)
 
-        // POST_NOTIFICATIONS (Android 13+)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             if (ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS)
                 != PackageManager.PERMISSION_GRANTED) {
@@ -278,15 +272,5 @@ class MainActivity : FlutterFragmentActivity() {
 
         val granted = grantResults.all { it == PackageManager.PERMISSION_GRANTED }
         Log.i(TAG, "Permission result (code=$requestCode): ${if (granted) "Tất cả đã cấp ✅" else "Một số bị từ chối ⚠️"}")
-
-        // Nếu đã có CALL_PHONE thì tự động khởi động ForegroundService
-        if (requestCode == REQ_NOTIFICATIONS && grantResults.isNotEmpty()) {
-            val callGranted = permissions.contains(Manifest.permission.CALL_PHONE) &&
-                grantResults[permissions.indexOf(Manifest.permission.CALL_PHONE)] == PackageManager.PERMISSION_GRANTED
-
-            if (callGranted) {
-                Log.i(TAG, "CALL_PHONE được cấp – SmartGuard sẵn sàng gọi điện khẩn cấp 📞")
-            }
-        }
     }
 }

@@ -10,6 +10,8 @@ using SmartGuard.API.Services.Adaptive;
 
 namespace SmartGuard.API.Controllers
 {
+    public record DiscordWebhookConfigDto(string? WebhookUrl);
+
     [ApiController]
     [Route("api/[controller]")]
     [Authorize]
@@ -42,16 +44,79 @@ namespace SmartGuard.API.Controllers
 
         private bool IsAdmin => User.IsInRole("Admin");
 
+        [HttpGet("discord-config")]
+        public IActionResult GetDiscordConfig()
+        {
+            var url = _discordService.GetActiveWebhookUrl();
+            var masked = string.IsNullOrWhiteSpace(url)
+                ? ""
+                : (url.Length > 45 ? url.Substring(0, 45) + "..." : url);
+            return Ok(new
+            {
+                webhookUrl = url,
+                maskedUrl = masked,
+                isConfigured = !string.IsNullOrWhiteSpace(url)
+            });
+        }
+
+        [HttpPost("discord-config")]
+        public IActionResult SaveDiscordConfig([FromBody] DiscordWebhookConfigDto dto)
+        {
+            if (string.IsNullOrWhiteSpace(dto?.WebhookUrl))
+                return BadRequest(new { message = "Vui lòng nhập Discord Webhook URL." });
+
+            _discordService.SetWebhookUrl(dto.WebhookUrl.Trim());
+            return Ok(new
+            {
+                message = "Đã lưu cấu hình Discord Webhook thành công!",
+                webhookUrl = _discordService.GetActiveWebhookUrl()
+            });
+        }
+
+        [HttpPost("test-discord")]
+        public async Task<IActionResult> TestDiscord([FromBody] DiscordWebhookConfigDto? dto)
+        {
+            var (success, message) = await _discordService.SendTestWebhookAsync(dto?.WebhookUrl);
+            if (success)
+                return Ok(new { success = true, message });
+
+            return BadRequest(new { success = false, message });
+        }
+
         [HttpPost("trigger")]
         public async Task<IActionResult> TriggerAlert([FromBody] TriggerAlertDto dto)
         {
             var device = await _db.Devices.Include(d => d.Zone).FirstOrDefaultAsync(d => d.Id == dto.DeviceId);
+            if (device == null && CurrentUserId != Guid.Empty)
+            {
+                // Tự động lấy thiết bị đầu tiên của người dùng hoặc khởi tạo thiết bị mặc định nếu chưa có
+                device = await _db.Devices.Include(d => d.Zone)
+                    .FirstOrDefaultAsync(d => d.OwnerId == CurrentUserId);
+
+                if (device == null)
+                {
+                    device = new GuardDevice
+                    {
+                        OwnerId = CurrentUserId,
+                        Name = "Camera Điện Thoại SmartGuard",
+                        Description = "Loại: camera | Vị trí: Khu vực chính",
+                        IsArmed = true,
+                        NoiseThreshold = 70.0,
+                        MotionThreshold = 3.5,
+                        RegisteredAt = DateTime.UtcNow,
+                        LastSeenAt = DateTime.UtcNow
+                    };
+                    _db.Devices.Add(device);
+                    await _db.SaveChangesAsync();
+                }
+            }
+
             if (device == null) return NotFound(new { message = "Thiết bị không tồn tại." });
 
             if (!device.IsArmed)
             {
                 _logger.LogInformation("Thiết bị {DeviceName} đang ở trạng thái Tắt cảnh giác (Disarmed). Bỏ qua cảnh báo.", device.Name);
-                return Ok(new { message = "Thiết bị đang tắt cảnh giác. Cảnh báo không phát động." });
+                return Ok(new { message = "Thiết bị đang tắt cảnh giác. Cảnh báo không phát động.", suppressed = true });
             }
 
             var triggerReason = string.IsNullOrWhiteSpace(dto.TriggerReason) ? "CHUYEN_DONG" : dto.TriggerReason.Trim();
@@ -68,13 +133,20 @@ namespace SmartGuard.API.Controllers
                 });
             }
 
+            // Tránh ảnh mẫu không tồn tại trên Cloud làm lỗi hiển thị
+            var imageUrl = dto.ImageUrl;
+            if (!string.IsNullOrWhiteSpace(imageUrl) && imageUrl.Contains("sample_alert.jpg", StringComparison.OrdinalIgnoreCase))
+            {
+                imageUrl = null;
+            }
+
             var alert = new AlertEvent
             {
                 DeviceId = device.Id,
                 TriggerReason = triggerReason,
                 TriggerScore = dto.TriggerScore,
                 Severity = severity,
-                ImageUrl = dto.ImageUrl,
+                ImageUrl = imageUrl,
                 AdaptiveReason = evaluation.ReasonExplanation,
                 Status = "Triggered",
                 TriggeredAt = DateTime.UtcNow
@@ -89,9 +161,9 @@ namespace SmartGuard.API.Controllers
 
             // Kiểm tra đường dẫn ảnh cục bộ nếu có để gửi Discord
             string? localImagePath = null;
-            if (!string.IsNullOrEmpty(dto.ImageUrl))
+            if (!string.IsNullOrEmpty(imageUrl))
             {
-                var cleanPath = dto.ImageUrl.TrimStart('/', '\\').Replace('/', Path.DirectorySeparatorChar);
+                var cleanPath = imageUrl.TrimStart('/', '\\').Replace('/', Path.DirectorySeparatorChar);
                 var fullPath = Path.Combine(_env.WebRootPath ?? Path.Combine(_env.ContentRootPath, "wwwroot"), cleanPath);
                 if (System.IO.File.Exists(fullPath))
                 {
@@ -99,7 +171,7 @@ namespace SmartGuard.API.Controllers
                 }
             }
 
-            // Gửi cảnh báo bất đồng bộ lên Discord nếu chế độ thích ứng cho phép
+            // Gửi cảnh báo lên Discord nếu chế độ thích ứng cho phép
             if (evaluation.EnableDiscordNotification)
             {
                 var baseUrl = HttpContext?.Request?.Host.HasValue == true
@@ -130,7 +202,7 @@ namespace SmartGuard.API.Controllers
                 id = alert.Id,
                 alertId = alert.Id,
                 status = alert.Status,
-                triggeredAt = alert.TriggeredAt,
+                triggeredAt = DateTime.SpecifyKind(alert.TriggeredAt, DateTimeKind.Utc),
                 adaptiveReason = alert.AdaptiveReason
             });
         }
@@ -140,7 +212,7 @@ namespace SmartGuard.API.Controllers
         {
             var userId = CurrentUserId;
 
-            var alerts = await _db.AlertEvents
+            var rawAlerts = await _db.AlertEvents
                 .Include(a => a.Device)
                 .ThenInclude(d => d!.Zone)
                 .Where(a => IsAdmin || (a.Device != null && a.Device.OwnerId == userId) ||
@@ -150,21 +222,22 @@ namespace SmartGuard.API.Controllers
                         (m.DeviceId == a.DeviceId || m.DeviceId == null))))
                 .OrderByDescending(a => a.TriggeredAt)
                 .Take(Math.Clamp(limit, 1, 200))
-                .Select(a => new AlertResponseDto(
-                    a.Id,
-                    a.DeviceId,
-                    a.Device != null ? a.Device.Name : "N/A",
-                    a.Device != null && a.Device.Zone != null ? a.Device.Zone.Name : null,
-                    a.TriggerReason,
-                    a.TriggerScore,
-                    a.Severity,
-                    a.Status,
-                    a.ImageUrl,
-                    a.TriggeredAt,
-                    a.AcknowledgedAt,
-                    a.AdaptiveReason
-                ))
                 .ToListAsync();
+
+            var alerts = rawAlerts.Select(a => new AlertResponseDto(
+                a.Id,
+                a.DeviceId,
+                a.Device != null ? a.Device.Name : "N/A",
+                a.Device != null && a.Device.Zone != null ? a.Device.Zone.Name : null,
+                a.TriggerReason,
+                a.TriggerScore,
+                a.Severity,
+                a.Status,
+                a.ImageUrl != null && a.ImageUrl.Contains("sample_alert.jpg", StringComparison.OrdinalIgnoreCase) ? null : a.ImageUrl,
+                DateTime.SpecifyKind(a.TriggeredAt, DateTimeKind.Utc),
+                a.AcknowledgedAt.HasValue ? DateTime.SpecifyKind(a.AcknowledgedAt.Value, DateTimeKind.Utc) : null,
+                a.AdaptiveReason
+            )).ToList();
 
             return Ok(alerts);
         }
@@ -188,8 +261,8 @@ namespace SmartGuard.API.Controllers
                     a.Id,
                     a.Status,
                     a.TriggerReason,
-                    a.TriggeredAt,
-                    a.AcknowledgedAt
+                    TriggeredAt = DateTime.SpecifyKind(a.TriggeredAt, DateTimeKind.Utc),
+                    AcknowledgedAt = a.AcknowledgedAt.HasValue ? DateTime.SpecifyKind(a.AcknowledgedAt.Value, DateTimeKind.Utc) : (DateTime?)null
                 })
                 .FirstOrDefaultAsync();
 
@@ -210,7 +283,6 @@ namespace SmartGuard.API.Controllers
             var alert = await _db.AlertEvents.Include(a => a.Device).FirstOrDefaultAsync(a => a.Id == id);
             if (alert == null) return NotFound(new { message = "Không tìm thấy cảnh báo." });
 
-            // Kiểm tra quyền xác nhận cảnh báo (Admin, Chủ sở hữu, hoặc Thành viên được cấp quyền CanAcknowledge)
             if (!IsAdmin && alert.Device != null && alert.Device.OwnerId != userId)
             {
                 var hasMemberPerm = await _db.MemberAccesses.AnyAsync(m =>
@@ -248,7 +320,6 @@ namespace SmartGuard.API.Controllers
             alert.AcknowledgedBy = userId;
             alert.AcknowledgedAt = DateTime.UtcNow;
 
-            // Tự động tạm dừng cảnh báo 3 phút nếu là Người quen hoặc Tắt chuông
             if (alert.Status == "KnownPerson" || alert.Status == "Muted")
             {
                 if (alert.Device != null)

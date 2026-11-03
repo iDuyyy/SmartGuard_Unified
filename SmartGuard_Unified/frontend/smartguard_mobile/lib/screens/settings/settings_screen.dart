@@ -1,4 +1,7 @@
+import 'dart:convert';
 import 'package:flutter/material.dart';
+import 'package:http/http.dart' as http;
+import 'package:shared_preferences/shared_preferences.dart';
 import '../../core/api_client.dart';
 import '../../core/app_config.dart';
 import '../../core/app_theme.dart';
@@ -91,6 +94,184 @@ class _SettingsScreenState extends State<SettingsScreen> {
     }
   }
 
+  Future<void> _showDiscordConfigDialog() async {
+    final prefs = await SharedPreferences.getInstance();
+    String currentWebhook = prefs.getString('sg_discord_webhook_url') ?? '';
+
+    try {
+      final res = await ApiClient.request('GET', '/api/alerts/discord-config');
+      if (res is Map && res['webhookUrl'] != null && res['webhookUrl'].toString().isNotEmpty) {
+        currentWebhook = res['webhookUrl'].toString();
+      }
+    } catch (_) {}
+
+    final webhookCtrl = TextEditingController(text: currentWebhook);
+    bool isTesting = false;
+    String? statusMsg;
+    bool statusOk = false;
+
+    if (!mounted) return;
+
+    await showDialog(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setDlg) => AlertDialog(
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+          title: const Row(
+            children: [
+              Icon(Icons.notifications_active_outlined, color: AppTheme.royalPurple),
+              SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  'Cấu hình & Gửi thử Discord',
+                  style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                ),
+              ),
+            ],
+          ),
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                const Text(
+                  'Dán đường dẫn Discord Webhook của kênh thông báo (Cài đặt kênh Discord → Tích hợp → Webhooks → Sao chép URL Webhook):',
+                  style: TextStyle(fontSize: 12, color: AppTheme.textSecondary),
+                ),
+                const SizedBox(height: 12),
+                TextField(
+                  controller: webhookCtrl,
+                  maxLines: 2,
+                  decoration: InputDecoration(
+                    labelText: 'Discord Webhook URL',
+                    hintText: 'https://discord.com/api/webhooks/...',
+                    prefixIcon: const Icon(Icons.link),
+                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(14)),
+                  ),
+                ),
+                const SizedBox(height: 12),
+                if (statusMsg != null)
+                  Container(
+                    padding: const EdgeInsets.all(10),
+                    decoration: BoxDecoration(
+                      color: statusOk ? const Color(0xFFE8F5E9) : const Color(0xFFFFEBEE),
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: Text(
+                      statusMsg!,
+                      style: TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600,
+                        color: statusOk ? const Color(0xFF2E7D32) : const Color(0xFFC62828),
+                      ),
+                    ),
+                  ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: const Text('Đóng'),
+            ),
+            OutlinedButton.icon(
+              icon: isTesting
+                  ? const SizedBox(width: 14, height: 14, child: CircularProgressIndicator(strokeWidth: 2))
+                  : const Icon(Icons.send_rounded, size: 16),
+              label: const Text('Gửi thử ngay'),
+              onPressed: isTesting
+                  ? null
+                  : () async {
+                      final url = webhookCtrl.text.trim();
+                      if (url.isEmpty || !url.startsWith('http')) {
+                        setDlg(() {
+                          statusOk = false;
+                          statusMsg = 'Vui lòng dán đường dẫn Discord Webhook hợp lệ.';
+                        });
+                        return;
+                      }
+                      setDlg(() {
+                        isTesting = true;
+                        statusMsg = null;
+                      });
+
+                      await prefs.setString('sg_discord_webhook_url', url);
+
+                      // 1. Thử đồng bộ lên Backend trước
+                      try {
+                        await ApiClient.request('POST', '/api/alerts/discord-config', body: {'webhookUrl': url});
+                      } catch (_) {}
+
+                      // 2. Gửi trực tiếp tới Discord Webhook để kiểm tra ngay tức thì
+                      try {
+                        final now = DateTime.now();
+                        final timeStr =
+                            '${now.hour.toString().padLeft(2, '0')}:${now.minute.toString().padLeft(2, '0')}:${now.second.toString().padLeft(2, '0')} '
+                            '${now.day.toString().padLeft(2, '0')}/${now.month.toString().padLeft(2, '0')}/${now.year}';
+                        final res = await http.post(
+                          Uri.parse(url),
+                          headers: {'Content-Type': 'application/json'},
+                          body: jsonEncode({
+                            'content': '✅ **KIỂM TRA THÔNG BÁO DISCORD SMARTGUARD** lúc `$timeStr` (Giờ Việt Nam)!',
+                            'embeds': [
+                              {
+                                'title': '🛡️ KẾT NỐI DISCORD THÀNH CÔNG',
+                                'description':
+                                    'Ứng dụng **SmartGuard Mobile** của tài khoản **$_username ($_email)** đã liên kết thành công với kênh Discord này!',
+                                'color': 3066993,
+                              }
+                            ]
+                          }),
+                        );
+                        if (res.statusCode >= 200 && res.statusCode < 300) {
+                          setDlg(() {
+                            isTesting = false;
+                            statusOk = true;
+                            statusMsg = '✅ Đã gửi tin nhắn thử nghiệm lên kênh Discord thành công! Hãy mở Discord kiểm tra.';
+                          });
+                        } else {
+                          setDlg(() {
+                            isTesting = false;
+                            statusOk = false;
+                            statusMsg =
+                                '❌ Discord từ chối Webhook (HTTP ${res.statusCode}). Webhook cũ có thể đã bị Discord tự động khóa khi đẩy lên GitHub. Hãy tạo Webhook mới trong kênh Discord và dán vào đây!';
+                          });
+                        }
+                      } catch (e) {
+                        setDlg(() {
+                          isTesting = false;
+                          statusOk = false;
+                          statusMsg = 'Lỗi kết nối: $e';
+                        });
+                      }
+                    },
+            ),
+            ElevatedButton(
+              style: ElevatedButton.styleFrom(backgroundColor: AppTheme.royalPurple, foregroundColor: Colors.white),
+              onPressed: () async {
+                final url = webhookCtrl.text.trim();
+                await prefs.setString('sg_discord_webhook_url', url);
+                try {
+                  await ApiClient.request('POST', '/api/alerts/discord-config', body: {'webhookUrl': url});
+                } catch (_) {}
+                if (mounted) {
+                  Navigator.pop(ctx);
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(
+                      content: Text('Đã lưu cấu hình Discord Webhook!'),
+                      backgroundColor: AppTheme.statusArmed,
+                    ),
+                  );
+                }
+              },
+              child: const Text('Lưu'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   void _showServerConfigDialog() {
     showDialog(
       context: context,
@@ -110,7 +291,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
                 const Text(
-                  'Thiết lập địa chỉ API của máy trạm để ứng dụng di động kết nối qua mạng LAN hoặc từ xa.',
+                  'Thiết lập địa chỉ API của máy trạm để ứng dụng di động kết nối qua mạng LAN hoặc Cloud.',
                   style: TextStyle(fontSize: 12, color: AppTheme.textSecondary),
                 ),
                 const SizedBox(height: 12),
@@ -119,7 +300,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   decoration: InputDecoration(
                     labelText: 'Địa chỉ Base URL',
                     prefixIcon: const Icon(Icons.link),
-                    hintText: 'http://192.168.1.100:5235',
+                    hintText: 'https://smartguard-unified.onrender.com',
                     border: OutlineInputBorder(borderRadius: BorderRadius.circular(14)),
                   ),
                 ),
@@ -128,6 +309,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   spacing: 6,
                   runSpacing: 6,
                   children: [
+                    ActionChip(
+                      label: const Text('Render Cloud'),
+                      onPressed: () => setDlgState(() => _serverController.text = AppConfig.defaultCloudUrl),
+                    ),
                     ActionChip(
                       label: const Text('Localhost (5235)'),
                       onPressed: () => setDlgState(() => _serverController.text = AppConfig.localhostUrl),
@@ -139,10 +324,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     ActionChip(
                       label: const Text('LAN mẫu'),
                       onPressed: () => setDlgState(() => _serverController.text = AppConfig.defaultLanUrl),
-                    ),
-                    ActionChip(
-                      label: const Text('DevTunnel'),
-                      onPressed: () => setDlgState(() => _serverController.text = AppConfig.defaultTunnelUrl),
                     ),
                   ],
                 ),
@@ -187,7 +368,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
               ),
               onPressed: () async {
                 await _saveServerUrl();
-                Navigator.pop(ctx);
+                if (mounted) Navigator.pop(ctx);
               },
               child: const Text('Lưu'),
             ),
@@ -209,7 +390,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
             Text('Đăng xuất'),
           ],
         ),
-        content: const Text('Bạn có chắc chắn muốn đăng xuất khỏi SmartGuard?'),
+        content: const Text('Bạn có chắc chắn muốn đăng xuất khỏi SmartGuard? (Tài khoản vẫn được ghi nhớ cho đăng nhập Vân tay lần sau).'),
         actions: [
           TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Hủy', style: TextStyle(color: AppTheme.textSecondary))),
           ElevatedButton(
@@ -240,7 +421,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
         child: SingleChildScrollView(
           child: Column(
             children: [
-              // Header matching mockup with Capybara peeking out
               Padding(
                 padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
                 child: Row(
@@ -274,7 +454,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
                         ),
                       ],
                     ),
-                    // Capybara Security Officer sticker peeking at top right (from mockup!)
                     Image.asset(
                       'assets/images/sticker_system.png',
                       height: 52,
@@ -328,12 +507,15 @@ class _SettingsScreenState extends State<SettingsScreen> {
                           children: [
                             Row(
                               children: [
-                                Text(
-                                  _username,
-                                  style: const TextStyle(
-                                    fontSize: 16,
-                                    fontWeight: FontWeight.bold,
-                                    color: AppTheme.textPrimary,
+                                Flexible(
+                                  child: Text(
+                                    _username,
+                                    style: const TextStyle(
+                                      fontSize: 16,
+                                      fontWeight: FontWeight.bold,
+                                      color: AppTheme.textPrimary,
+                                    ),
+                                    overflow: TextOverflow.ellipsis,
                                   ),
                                 ),
                                 const SizedBox(width: 8),
@@ -369,7 +551,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
               const SizedBox(height: 14),
 
-              // Group 2: Core Settings Menu Cards (matching mockup list)
+              // Group 2: Core Settings Menu Cards
               Padding(
                 padding: const EdgeInsets.symmetric(horizontal: 16),
                 child: Container(
@@ -388,10 +570,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   child: Column(
                     children: [
                       _buildMenuItem(
-                        icon: Icons.person_outline,
-                        iconColor: const Color(0xFF3B82F6),
-                        title: 'Hồ sơ & tài khoản',
-                        onTap: () {},
+                        icon: Icons.notifications_active_outlined,
+                        iconColor: const Color(0xFFF59E0B),
+                        title: 'Cấu hình & Gửi thử Thông báo Discord',
+                        onTap: _showDiscordConfigDialog,
                       ),
                       _buildDivider(),
                       _buildMenuItem(
@@ -420,23 +602,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       ),
                       _buildDivider(),
                       _buildMenuItem(
-                        icon: Icons.notifications_none,
-                        iconColor: const Color(0xFFF59E0B),
-                        title: 'Thông báo',
-                        onTap: () {},
-                      ),
-                      _buildDivider(),
-                      _buildMenuItem(
-                        icon: Icons.cloud_outlined,
-                        iconColor: const Color(0xFF06B6D4),
-                        title: 'Lưu trữ & Cloud',
-                        onTap: () {},
-                      ),
-                      _buildDivider(),
-                      _buildMenuItem(
                         icon: Icons.devices_outlined,
                         iconColor: AppTheme.royalPurple,
-                        title: 'Thiết bị trong nhà',
+                        title: 'Thiết bị & Khu vực trong nhà',
                         onTap: () {
                           Navigator.push(context, MaterialPageRoute(builder: (_) => const ZonesScreen()));
                         },
@@ -445,18 +613,17 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       _buildMenuItem(
                         icon: Icons.people_outline,
                         iconColor: AppTheme.coralPink,
-                        title: 'Chia sẻ & Thành viên khẩn cấp',
+                        title: 'Người thân khẩn cấp & Chia sẻ Camera',
                         onTap: () {
                           Navigator.push(context, MaterialPageRoute(builder: (_) => const MembersScreen()));
                         },
                       ),
 
-                      // RBAC Admin Screen Item: Highlighted for Admin
                       _buildDivider(),
                       _buildMenuItem(
                         icon: Icons.admin_panel_settings,
                         iconColor: const Color(0xFF7C3AED),
-                        title: 'Quản trị hệ thống (Admin)',
+                        title: 'Quản trị hệ thống & Phân quyền (Admin)',
                         badge: Container(
                           padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
                           decoration: BoxDecoration(
@@ -486,20 +653,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       ),
                       _buildDivider(),
                       _buildMenuItem(
-                        icon: Icons.help_outline,
-                        iconColor: const Color(0xFF64748B),
-                        title: 'Trung tâm trợ giúp',
-                        onTap: () {},
-                      ),
-                      _buildDivider(),
-                      _buildMenuItem(
-                        icon: Icons.info_outline,
-                        iconColor: const Color(0xFF64748B),
-                        title: 'Giới thiệu ứng dụng (v2.0)',
-                        onTap: () {},
-                      ),
-                      _buildDivider(),
-                      _buildMenuItem(
                         icon: Icons.logout,
                         iconColor: AppTheme.coralPink,
                         title: 'Đăng xuất',
@@ -513,7 +666,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
               const SizedBox(height: 24),
 
-              // Decorative bottom illustration
               Center(
                 child: Column(
                   children: [

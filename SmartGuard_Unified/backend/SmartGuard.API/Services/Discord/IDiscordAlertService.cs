@@ -13,13 +13,20 @@ namespace SmartGuard.API.Services.Discord
             !BotToken.Equals("chuoimakhoa", StringComparison.OrdinalIgnoreCase) &&
             BotToken.Length > 30 &&
             ChannelId != 0;
+
         public bool IsWebhookConfigured =>
             !string.IsNullOrWhiteSpace(WebhookUrl) &&
-            WebhookUrl.StartsWith("https://discord.com/api/webhooks/", StringComparison.OrdinalIgnoreCase);
+            (WebhookUrl.StartsWith("https://discord.com/api/webhooks/", StringComparison.OrdinalIgnoreCase) ||
+             WebhookUrl.StartsWith("https://discordapp.com/api/webhooks/", StringComparison.OrdinalIgnoreCase) ||
+             WebhookUrl.StartsWith("https://ptb.discord.com/api/webhooks/", StringComparison.OrdinalIgnoreCase) ||
+             WebhookUrl.StartsWith("https://canary.discord.com/api/webhooks/", StringComparison.OrdinalIgnoreCase));
     }
 
     public interface IDiscordAlertService
     {
+        string GetActiveWebhookUrl();
+        void SetWebhookUrl(string webhookUrl);
+
         Task SendAlertWithImageAsync(
             Guid alertId,
             string deviceName,
@@ -27,6 +34,8 @@ namespace SmartGuard.API.Services.Discord
             string severity,
             string? localImagePath,
             string? serverBaseUrl = null);
+
+        Task<(bool Success, string Message)> SendTestWebhookAsync(string? customWebhookUrl = null);
 
         Task UpdateAlertActionAsync(Guid alertId, string status, string responderName);
     }

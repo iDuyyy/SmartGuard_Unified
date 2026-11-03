@@ -101,6 +101,39 @@ namespace SmartGuard.API.Controllers
                 ownedDevices.AddRange(sharedDevices);
             }
 
+            // 3. Nếu người dùng mới đăng ký chưa có thiết bị nào, tự động khởi tạo 1 thiết bị Camera mặc định
+            if (ownedDevices.Count == 0 && userId != Guid.Empty)
+            {
+                var defaultDevice = new GuardDevice
+                {
+                    OwnerId = userId,
+                    Name = "Camera Điện Thoại SmartGuard",
+                    Description = "Loại: camera | Vị trí: Cửa chính",
+                    IsArmed = true,
+                    NoiseThreshold = 70.0,
+                    MotionThreshold = 3.5,
+                    RegisteredAt = DateTime.UtcNow,
+                    LastSeenAt = DateTime.UtcNow
+                };
+                _db.Devices.Add(defaultDevice);
+                await _db.SaveChangesAsync();
+
+                ownedDevices.Add(new DeviceResponseDto(
+                    defaultDevice.Id,
+                    defaultDevice.OwnerId,
+                    defaultDevice.ZoneId,
+                    null,
+                    defaultDevice.Name,
+                    defaultDevice.DeviceCode,
+                    defaultDevice.Description,
+                    defaultDevice.IsArmed,
+                    defaultDevice.NoiseThreshold,
+                    defaultDevice.MotionThreshold,
+                    defaultDevice.RegisteredAt,
+                    defaultDevice.LastSeenAt
+                ));
+            }
+
             return Ok(ownedDevices);
         }
 

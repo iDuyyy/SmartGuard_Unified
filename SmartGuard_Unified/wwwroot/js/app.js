@@ -876,19 +876,65 @@ document.addEventListener('DOMContentLoaded', () => {
     const loginForm = document.getElementById('loginForm');
     const registerForm = document.getElementById('registerForm');
     const btnQuickAdmin = document.getElementById('btnQuickAdminLogin');
+    const tabLogin = document.getElementById('authTabLogin');
+    const tabRegister = document.getElementById('authTabRegister');
+    const footerSwitch = document.getElementById('authFooterSwitch');
+    const cardTitle = document.getElementById('authCardTitle');
+    const cardSubtitle = document.getElementById('authCardSubtitle');
+
+    function switchAuthMode(mode) {
+      const isReg = mode === 'register';
+      if (loginForm) loginForm.style.display = isReg ? 'none' : 'block';
+      if (registerForm) registerForm.style.display = isReg ? 'block' : 'none';
+      if (tabLogin) {
+        tabLogin.className = isReg ? 'btn btn-outline btn-sm' : 'btn btn-primary btn-sm';
+        if (isReg) tabLogin.style.border = 'none';
+      }
+      if (tabRegister) {
+        tabRegister.className = isReg ? 'btn btn-primary btn-sm' : 'btn btn-outline btn-sm';
+        if (!isReg) tabRegister.style.border = 'none';
+      }
+      if (cardTitle) {
+        cardTitle.textContent = isReg ? 'Create Guardian Account' : 'Security Guardian Login';
+      }
+      if (cardSubtitle) {
+        cardSubtitle.textContent = isReg
+          ? 'Register a new account to monitor your cameras and receive OTP alerts'
+          : 'Authenticate to access smart home camera surveillance';
+      }
+      if (footerSwitch) {
+        footerSwitch.innerHTML = isReg
+          ? 'Already have an account? <a href="#auth" id="linkSwitchToLogin" style="font-weight: 700; color: var(--security-blue);">Sign In</a>'
+          : 'Don\'t have a camera account? <a href="#auth" id="linkSwitchToRegister" style="font-weight: 700; color: var(--security-blue);">Register New Account</a>';
+        const linkReg = document.getElementById('linkSwitchToRegister');
+        const linkLog = document.getElementById('linkSwitchToLogin');
+        if (linkReg) linkReg.addEventListener('click', (e) => { e.preventDefault(); switchAuthMode('register'); });
+        if (linkLog) linkLog.addEventListener('click', (e) => { e.preventDefault(); switchAuthMode('login'); });
+      }
+    }
+
+    if (tabLogin) tabLogin.addEventListener('click', () => switchAuthMode('login'));
+    if (tabRegister) tabRegister.addEventListener('click', () => switchAuthMode('register'));
+    const initLinkReg = document.getElementById('linkSwitchToRegister');
+    if (initLinkReg) {
+      initLinkReg.addEventListener('click', (e) => {
+        e.preventDefault();
+        switchAuthMode('register');
+      });
+    }
 
     if (loginForm) {
       loginForm.addEventListener('submit', async (e) => {
         e.preventDefault();
-        const iden = document.getElementById('loginIdentifier').value;
+        const iden = document.getElementById('loginIdentifier').value.trim();
         const pass = document.getElementById('loginPassword').value;
 
         showToast('Authenticating with Capybara Security...', 'info');
         try {
           const res = await SmartGuardApi.login(iden, pass);
           if (res.challengeId) {
-            // Open OTP Challenge Modal
-            openOtpModal(res.challengeId, res.email);
+            // Open OTP Challenge Modal (pass devOtp if returned for .local or SMTP fallback)
+            openOtpModal(res.challengeId, res.email, res.devOtp, res.message);
           } else if (res.token) {
             showToast('Login successful! Welcome Guardian.', 'success');
             checkUserSession();
@@ -911,14 +957,30 @@ document.addEventListener('DOMContentLoaded', () => {
     if (registerForm) {
       registerForm.addEventListener('submit', async (e) => {
         e.preventDefault();
-        const email = document.getElementById('regEmail').value;
-        const username = document.getElementById('regUsername').value;
+        const username = document.getElementById('regUsername').value.trim();
+        const email = document.getElementById('regEmail').value.trim();
         const password = document.getElementById('regPassword').value;
+        const confirmPassword = document.getElementById('regConfirmPassword')?.value ?? password;
+
+        if (username.length < 3) {
+          showToast('Username must be at least 3 characters.', 'warning');
+          return;
+        }
+        if (password.length < 6) {
+          showToast('Password must be at least 6 characters.', 'warning');
+          return;
+        }
+        if (password !== confirmPassword) {
+          showToast('Passwords do not match.', 'danger');
+          return;
+        }
 
         try {
           await SmartGuardApi.register({ email, username, password, role: 'Owner' });
-          showToast('Registration successful! Please login.', 'success');
-          document.getElementById('authTabLogin').click();
+          showToast('Registration successful! You can now sign in.', 'success');
+          document.getElementById('loginIdentifier').value = email;
+          document.getElementById('loginPassword').value = password;
+          switchAuthMode('login');
         } catch (err) {
           showToast(err.message || 'Registration failed.', 'danger');
         }
@@ -956,19 +1018,29 @@ document.addEventListener('DOMContentLoaded', () => {
     if (backdrop) backdrop.classList.remove('active');
   }
 
-  function openOtpModal(challengeId, maskedEmail) {
+  function openOtpModal(challengeId, maskedEmail, devOtp, serverMessage) {
+    const devBanner = devOtp
+      ? `<div style="background: #eff6ff; border: 1px dashed #3b82f6; border-radius: 10px; padding: 10px; margin-bottom: 14px; font-size: 0.85rem; color: #1e3a8a;">
+           ⚡ <strong>Mã OTP (Local / Fallback):</strong> <span style="font-family: monospace; font-size: 1.15rem; font-weight: 800; letter-spacing: 3px;">${escapeHtml(devOtp)}</span>
+           <div style="font-size: 0.75rem; color: #475569; margin-top: 2px;">Đã tự động điền sẵn mã OTP cho bạn</div>
+         </div>`
+      : `<div style="font-size: 0.78rem; color: var(--secondary-text); margin-bottom: 12px;">
+           💡 Kiểm tra hộp thư đến hoặc mục <strong>Spam / Thư rác</strong> trên Gmail của bạn.
+         </div>`;
+
     openModal(`
       <div style="text-align: center; padding: 10px;">
         <img src="/images/lock.png" style="width: 80px; height: 80px; margin-bottom: 12px;" alt="OTP">
         <h3 style="color: var(--primary-navy); margin-bottom: 6px;">Two-Factor Verification</h3>
-        <p style="font-size: 0.88rem; color: var(--secondary-text); margin-bottom: 18px;">
-          A 6-digit OTP code was sent to <strong>${maskedEmail || 'your email'}</strong>
+        <p style="font-size: 0.88rem; color: var(--secondary-text); margin-bottom: 12px;">
+          ${escapeHtml(serverMessage || 'A 6-digit OTP code was sent to')} <strong>${escapeHtml(maskedEmail || 'your email')}</strong>
         </p>
+        ${devBanner}
         <div class="form-group">
-          <input type="text" id="otpInputCode" class="form-input" placeholder="Enter 6-digit code" maxlength="6" style="text-align: center; font-size: 1.4rem; letter-spacing: 6px; font-family: monospace;">
+          <input type="text" id="otpInputCode" class="form-input" value="${devOtp ? escapeHtml(devOtp) : ''}" placeholder="Enter 6-digit code" maxlength="6" style="text-align: center; font-size: 1.4rem; letter-spacing: 6px; font-family: monospace;">
         </div>
         <button class="btn btn-primary btn-lg" style="width: 100%;" onclick="window.SmartGuardApp.submitOtp('${challengeId}')">
-          Verify & Access Dashboard
+          Verify &amp; Access Dashboard
         </button>
       </div>
     `);

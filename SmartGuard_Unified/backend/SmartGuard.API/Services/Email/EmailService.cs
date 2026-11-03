@@ -39,7 +39,7 @@ namespace SmartGuard.API.Services.Email
 
         public async Task<bool> SendOtpEmailAsync(string toEmail, string otpCode, string purpose)
         {
-            // Tài khoản nội bộ (.local) hoặc chưa cấu hình SMTP → in trực tiếp ra log không cần kết nối mạng
+            // Tài khoản nội bộ (.local) hoặc chưa cấu hình SMTP → in trực tiếp ra log và trả về devOtp trên giao diện
             if (!_options.IsConfigured || toEmail.EndsWith(".local", StringComparison.OrdinalIgnoreCase))
             {
                 _logger.LogWarning("⚠️ [DEV/LOCAL OTP] Mã OTP cho {Email} [{Purpose}] là: >>> {Code} <<< (Hạn 5 phút)",
@@ -50,9 +50,9 @@ namespace SmartGuard.API.Services.Email
             try
             {
                 var message = new MimeMessage();
-                message.From.Add(new MailboxAddress("SmartGuard Security", _options.Email));
-                message.To.Add(new MailboxAddress(toEmail, toEmail));
-                message.Subject = $"[SmartGuard] Mã xác thực {purpose} của bạn";
+                message.From.Add(new MailboxAddress("SmartGuard Security", _options.Email.Trim()));
+                message.To.Add(new MailboxAddress(toEmail, toEmail.Trim()));
+                message.Subject = $"[SmartGuard] Mã xác thực {purpose} của bạn: {otpCode}";
 
                 var bodyBuilder = new BodyBuilder
                 {
@@ -69,13 +69,20 @@ namespace SmartGuard.API.Services.Email
 
                 message.Body = bodyBuilder.ToMessageBody();
 
-                using var client = new SmtpClient { Timeout = 4000 };
-                await client.ConnectAsync(_options.Host, _options.Port, MailKit.Security.SecureSocketOptions.StartTls);
-                await client.AuthenticateAsync(_options.Email, _options.Password);
+                using var client = new SmtpClient
+                {
+                    Timeout = 10000,
+                    CheckCertificateRevocation = false,
+                    ServerCertificateValidationCallback = (_, _, _, _) => true
+                };
+
+                var cleanPassword = _options.Password.Replace(" ", string.Empty).Trim();
+                await client.ConnectAsync(_options.Host.Trim(), _options.Port, MailKit.Security.SecureSocketOptions.StartTls);
+                await client.AuthenticateAsync(_options.Email.Trim(), cleanPassword);
                 await client.SendAsync(message);
                 await client.DisconnectAsync(true);
 
-                _logger.LogInformation("Đã gửi email OTP tới {Email}", toEmail);
+                _logger.LogInformation("✅ Đã gửi email OTP tới {Email}", toEmail);
                 return true;
             }
             catch (Exception ex)

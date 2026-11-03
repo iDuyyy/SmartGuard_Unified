@@ -21,14 +21,21 @@ class _RegisterScreenState extends State<RegisterScreen> {
   bool _obscureConfirm = true;
 
   Future<void> _submitRegister() async {
-    final fullName = _fullNameController.text.trim();
+    final rawUsername = _fullNameController.text.trim();
     final email = _emailController.text.trim();
     final password = _passwordController.text;
     final confirm = _confirmPasswordController.text;
 
-    if (fullName.isEmpty || email.isEmpty || password.isEmpty) {
+    if (rawUsername.isEmpty || email.isEmpty || password.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Vui lòng điền đầy đủ các thông tin.')),
+      );
+      return;
+    }
+
+    if (rawUsername.length < 3) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Tên đăng nhập phải có tối thiểu 3 ký tự.')),
       );
       return;
     }
@@ -64,10 +71,9 @@ class _RegisterScreenState extends State<RegisterScreen> {
     setState(() => _isLoading = true);
 
     try {
-      final username = email.split('@')[0];
       await AuthService.register(
         email: email,
-        username: username,
+        username: rawUsername,
         password: password,
         role: 'Owner', // Regular home user
       );
@@ -153,12 +159,12 @@ class _RegisterScreenState extends State<RegisterScreen> {
               ),
               const SizedBox(height: 22),
 
-              // Họ và tên
+              // Tên đăng nhập (Username)
               TextField(
                 controller: _fullNameController,
                 decoration: const InputDecoration(
-                  labelText: 'Họ và tên',
-                  hintText: 'Nguyễn Văn An',
+                  labelText: 'Tên đăng nhập (Username)',
+                  hintText: 'nguyenvana',
                   prefixIcon: Icon(Icons.person_outline_rounded, color: AppTheme.coralPink),
                 ),
               ),
@@ -169,7 +175,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
                 controller: _emailController,
                 keyboardType: TextInputType.emailAddress,
                 decoration: const InputDecoration(
-                  labelText: 'Email',
+                  labelText: 'Email (nhận mã OTP)',
                   hintText: 'example@gmail.com',
                   prefixIcon: Icon(Icons.mail_outline_rounded, color: AppTheme.coralPink),
                 ),
@@ -181,7 +187,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
                 controller: _passwordController,
                 obscureText: _obscurePassword,
                 decoration: InputDecoration(
-                  labelText: 'Mật khẩu',
+                  labelText: 'Mật khẩu (tối thiểu 6 ký tự)',
                   prefixIcon: const Icon(Icons.lock_outline_rounded, color: AppTheme.coralPink),
                   suffixIcon: IconButton(
                     icon: Icon(_obscurePassword ? Icons.visibility_off_outlined : Icons.visibility_outlined, color: AppTheme.secondaryText),

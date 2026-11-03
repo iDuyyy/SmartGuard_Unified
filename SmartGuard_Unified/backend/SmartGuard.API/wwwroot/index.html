@@ -854,29 +854,63 @@
           <div class="auth-card">
             
             <img src="/images/sticker_login_screen.png" class="auth-mascot-img" alt="Login Mascot">
-            <h2 class="auth-title">Security Guardian Login</h2>
-            <p class="auth-subtitle">Authenticate to access smart home camera surveillance</p>
+            <h2 class="auth-title" id="authCardTitle">Security Guardian Login</h2>
+            <p class="auth-subtitle" id="authCardSubtitle">Authenticate to access smart home camera surveillance</p>
 
+            <!-- Tab switcher between Login and Register -->
+            <div style="display: flex; gap: 8px; margin-bottom: 18px; background: var(--pale-blue-bg, #f1f5f9); padding: 4px; border-radius: 12px;">
+              <button type="button" id="authTabLogin" class="btn btn-primary btn-sm" style="flex: 1;">
+                Sign In
+              </button>
+              <button type="button" id="authTabRegister" class="btn btn-outline btn-sm" style="flex: 1; border: none;">
+                Register Account
+              </button>
+            </div>
+
+            <!-- Form 1: Sign In -->
             <form id="loginForm" class="auth-form">
               <div class="form-group">
                 <label class="form-label">Username or Email</label>
-                <input type="text" id="loginIdentifier" class="form-input" placeholder="admin@smartguard.local" required>
+                <input type="text" id="loginIdentifier" class="form-input" placeholder="admin@smartguard.local or your email" required>
               </div>
               <div class="form-group">
                 <label class="form-label">Password</label>
                 <input type="password" id="loginPassword" class="form-input" placeholder="••••••••••••" required>
               </div>
               <button type="submit" class="btn btn-primary btn-lg" style="width: 100%; margin-bottom: 12px;">
-                Authenticate & Enter
+                Authenticate &amp; Enter
               </button>
               <button type="button" class="btn btn-outline" id="btnQuickAdminLogin" style="width: 100%;">
                 ⚡ Quick Fill Default Admin Credentials
               </button>
             </form>
 
-            <div class="auth-footer">
+            <!-- Form 2: Register New Account -->
+            <form id="registerForm" class="auth-form" style="display: none;">
+              <div class="form-group">
+                <label class="form-label">Username (min 3 characters)</label>
+                <input type="text" id="regUsername" class="form-input" placeholder="e.g. nguyenvana" minlength="3" required>
+              </div>
+              <div class="form-group">
+                <label class="form-label">Email Address (Gmail for OTP)</label>
+                <input type="email" id="regEmail" class="form-input" placeholder="yourname@gmail.com" required>
+              </div>
+              <div class="form-group">
+                <label class="form-label">Password (min 6 characters)</label>
+                <input type="password" id="regPassword" class="form-input" placeholder="At least 6 characters" minlength="6" required>
+              </div>
+              <div class="form-group">
+                <label class="form-label">Confirm Password</label>
+                <input type="password" id="regConfirmPassword" class="form-input" placeholder="Re-enter password" minlength="6" required>
+              </div>
+              <button type="submit" class="btn btn-primary btn-lg" style="width: 100%;">
+                Create Guardian Account
+              </button>
+            </form>
+
+            <div class="auth-footer" id="authFooterSwitch">
               Don't have a camera account?
-              <a href="#dashboard" style="font-weight: 700; color: var(--security-blue);" onclick="window.SmartGuardApp.showToast('Please contact system administrator or register a new account.', 'info')">Register New Account</a>
+              <a href="#auth" id="linkSwitchToRegister" style="font-weight: 700; color: var(--security-blue);">Register New Account</a>
             </div>
 
           </div>

@@ -690,6 +690,8 @@ class AlertsHistoryScreenState extends State<AlertsHistoryScreen> {
                     children: [
                       Text(
                         _friendlyReason(alert.triggerReason),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
                         style: const TextStyle(
                           fontSize: 14,
                           fontWeight: FontWeight.bold,
@@ -697,45 +699,26 @@ class AlertsHistoryScreenState extends State<AlertsHistoryScreen> {
                         ),
                       ),
                       const SizedBox(height: 3),
-                      Row(
-                        children: [
-                          Text(
-                            alert.deviceName.isNotEmpty
-                                ? alert.deviceName
-                                : 'Camera cửa chính',
-                            style: const TextStyle(
-                              fontSize: 12,
-                              color: AppTheme.textSecondary,
-                            ),
-                          ),
-                          const SizedBox(width: 6),
-                          const Text(
-                            '•',
-                            style: TextStyle(
-                              color: AppTheme.textSecondary,
-                              fontSize: 10,
-                            ),
-                          ),
-                          const SizedBox(width: 6),
-                          Text(
-                            timeStr,
-                            style: const TextStyle(
-                              fontSize: 12,
-                              color: AppTheme.textSecondary,
-                              fontWeight: FontWeight.w500,
-                            ),
-                          ),
-                        ],
+                      Text(
+                        '${alert.deviceName.isNotEmpty ? alert.deviceName : 'Camera cửa chính'} • $timeStr',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          fontSize: 12,
+                          color: AppTheme.textSecondary,
+                        ),
                       ),
                     ],
                   ),
                 ),
 
+                const SizedBox(width: 8),
+
                 // Right thumbnail
                 ClipRRect(
                   borderRadius: BorderRadius.circular(10),
                   child: Container(
-                    width: 52,
+                    width: 48,
                     height: 42,
                     color: const Color(0xFFF1F5F9),
                     child: alert.imageUrl != null && alert.imageUrl!.isNotEmpty

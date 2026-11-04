@@ -593,12 +593,15 @@ class DashboardScreenState extends State<DashboardScreen> {
 
                     // 3. SỰ KIỆN GẦN ĐÂY
                     Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
                       children: [
-                        const Text(
-                          'Sự kiện gần đây (Chạm để xem ảnh)',
-                          style: TextStyle(fontSize: 15, fontWeight: FontWeight.w800, color: AppTheme.headingDark),
+                        const Expanded(
+                          child: Text(
+                            'Sự kiện gần đây',
+                            style: TextStyle(fontSize: 15, fontWeight: FontWeight.w800, color: AppTheme.headingDark),
+                            overflow: TextOverflow.ellipsis,
+                          ),
                         ),
+                        const SizedBox(width: 8),
                         GestureDetector(
                           onTap: () {
                             Navigator.of(context).push(
@@ -652,12 +655,15 @@ class DashboardScreenState extends State<DashboardScreen> {
 
                     // 4. CHỨC NĂNG NHANH & 6 TRẠNG THÁI
                     Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
                       children: [
-                        const Text(
-                          'Trạng thái bảo vệ & Tạm dừng',
-                          style: TextStyle(fontSize: 15, fontWeight: FontWeight.w800, color: AppTheme.headingDark),
+                        const Expanded(
+                          child: Text(
+                            'Trạng thái bảo vệ & Tạm dừng',
+                            style: TextStyle(fontSize: 15, fontWeight: FontWeight.w800, color: AppTheme.headingDark),
+                            overflow: TextOverflow.ellipsis,
+                          ),
                         ),
+                        const SizedBox(width: 8),
                         TextButton.icon(
                           onPressed: _showSnoozeModal,
                           icon: const Icon(Icons.snooze_rounded, size: 18, color: AppTheme.royalPurple),

@@ -1,0 +1,140 @@
+================================================================================
+BÁO CÁO KẾT QUẢ ĐỒ ÁN MÔN HỌC: LẬP TRÌNH THIẾT BỊ DI ĐỘNG
+ĐỀ TÀI: THIẾT KẾ VÀ XÂY DỰNG ỨNG DỤNG DI ĐỘNG CHỐNG TRỘM THÔNG MINH (SMARTGUARD UNIFIED)
+LỚP / LỊCH HỌC: BUỔI CHIỀU THỨ 4 - NHÓM 4
+================================================================================
+
+I. TỔNG QUAN ĐỀ TÀI
+--------------------------------------------------------------------------------
+1. Tên hệ thống: SmartGuard Unified - Hệ thống giám sát an ninh & Chống trộm đa nền tảng
+2. Kiến trúc giải pháp:
+   - Ứng dụng Di động (Mobile App): Flutter (Dart) tích hợp tầng Native Android (Kotlin).
+   - Máy chủ Đám mây (Backend API): ASP.NET Core 8 Web API (.NET 8), Entity Framework Core.
+   - Cơ sở dữ liệu: Microsoft SQL Server (Somee Cloud Database có mã hóa kết nối TLS).
+   - Trung tâm điều hành Web (Web Dashboard): Single Page Application (HTML5/CSS3/Vanilla JS).
+   - Hệ thống thông báo khẩn cấp: Kênh thông báo Discord Webhook & Cuộc gọi thoại trực tiếp qua thẻ SIM.
+   - Triển khai hệ thống: Đã triển khai và hoạt động trên Render Cloud:
+     URL: https://smartguard-unified.onrender.com
+
+
+II. DANH SÁCH TOÀN BỘ CÁC CHỨC NĂNG ĐÃ HOÀN THÀNH
+--------------------------------------------------------------------------------
+
+1. PHÂN HỆ XÁC THỰC, BẢO MẬT & PHÂN QUYỀN (AUTHENTICATION & RBAC)
+--------------------------------------------------------------------------------
+- Đăng ký tài khoản mới: Tự động mã hóa mật khẩu người dùng chuẩn bảo mật BCrypt (độ an toàn cao).
+- Đăng nhập xác thực 2 lớp (2FA - Two-Factor Authentication):
+  + Tự động gửi mã OTP 6 chữ số ngẫu nhiên qua Gmail SMTP đến hòm thư người dùng.
+  + Hỗ trợ cơ chế hiển thị mã OTP trực tiếp (Local Fallback) khi ứng dụng chạy trong mạng nội bộ LAN hoặc môi trường máy chủ đám mây chặn cổng gửi mail SMTP.
+  + Cơ chế chống tấn công đoán mật mã (Rate Limiting: tối đa 15 yêu cầu/phút, mã OTP tự hủy sau 5 phút).
+- Đăng nhập Sinh trắc học (Vân tay / Face ID):
+  + Tích hợp thư viện local_auth, kiểm tra cảm biến sinh trắc học phần cứng của thiết bị.
+  + Cơ chế lưu trữ phiên mã hóa (FlutterSecureStorage) và tự động khôi phục đúng tài khoản đăng nhập gần nhất khi quét vân tay thành công.
+- Phân quyền người dùng (Role-Based Access Control - RBAC):
+  + Hỗ trợ các vai trò: Quản trị viên hệ thống (Admin), Chủ nhà (Owner), Thành viên gia đình (Member).
+  + Tài khoản đầu tiên đăng ký trên hệ thống sạch được tự động nâng cấp quyền Admin.
+  + Admin có quyền tạo mới, cấp/thu hồi quyền, khóa hoặc mở khóa tài khoản thành viên.
+- Bảo mật tầng API: Ràng buộc xác thực JSON Web Token (JWT Bearer Token thời hạn 24 giờ) cho mọi tương tác quan trọng.
+
+
+2. PHÂN HỆ THỊ GIÁC MÁY TÍNH & NHẬN DIỆN KHUÔN MẶT (CAMERA AI GUARD)
+--------------------------------------------------------------------------------
+- Luồng giám sát trực tiếp (Camera Stream):
+  + Khởi chạy camera thời gian thực với độ phân giải Medium (tối ưu hóa pin và bộ nhớ RAM).
+  + Chuyển đổi linh hoạt giữa Camera trước và Camera sau của điện thoại.
+- Trí tuệ nhân tạo nhận diện khuôn mặt (Google ML Kit Face Detection):
+  + Phân tích từng khung hình camera ở tầng máy ảo hiệu năng cao.
+  + Tự động phát hiện khuôn mặt xuất hiện trước vùng quan sát của camera.
+- Phân loại Người lạ vs Người quen:
+  + Phát hiện người lạ (Stranger Detected): Lập tức kích hoạt chuỗi báo động, chụp ảnh bằng chứng gửi lên máy chủ và Discord.
+  + Nhận diện người quen: Hệ thống tạm dừng báo động 3 phút, phát giọng nói chào đón thân thiện ("Xin chào người quen!") bằng tiếng Việt qua dịch vụ Text-to-Speech (TTS).
+- Chụp ảnh bằng chứng an toàn (Safe Snapshot Capture):
+  + Thuật toán tự động ngắt luồng ImageStream trước khi gọi hàm chụp ảnh của Android, ngăn chặn triệt để lỗi xung đột tài nguyên camera.
+  + Tải ảnh bằng chứng lên Cloud Storage và hiển thị trên màn hình lịch sử cảnh báo.
+
+
+3. PHÂN HỆ AI ÂM THANH & CẢM BIẾN CHUYỂN ĐỘNG (GIAI ĐOẠN 3)
+--------------------------------------------------------------------------------
+- Trí tuệ nhân tạo phân loại âm thanh thời gian thực (TFLite YAMNet):
+  + Tích hợp mô hình học sâu YAMNet với 521 nhãn âm thanh chuẩn quốc tế.
+  + Chạy inference trên tiến trình độc lập (IsolateInterpreter), đảm bảo giao diện ứng dụng duy trì độ mượt 60 FPS.
+  + Thu âm chuẩn phòng thí nghiệm: 16,000 Hz, 16-bit PCM Mono, cửa sổ đệm trượt 15,600 mẫu (0.975 giây).
+  + Bộ lọc im lặng thông minh (Silence Gate RMS = 0.008): Tự động ngắt AI khi phòng yên tĩnh, tiết kiệm hơn 90% tải CPU và bảo vệ pin điện thoại.
+  + Phân loại âm thanh nguy cấp: Nhận diện chính xác tiếng kính vỡ (Glass breaking), tiếng nổ/súng (Gunshot/Explosion), tiếng còi báo động (Siren), tiếng la hét (Screaming).
+- Cảm biến Rung lắc gia tốc kế (Accelerometer Sensor):
+  + Đọc dữ liệu từ cảm biến phần cứng qua sensors_plus ở tần số 200ms.
+  + Bộ lọc thông thấp khử hoàn toàn trọng lực tĩnh của Trái Đất (g = 9.81 m/s²).
+  + Thang đo độ nhạy 4 bậc: Dưới 1.5 m/s² (tĩnh), 1.5 - 3.5 m/s² (dao động nhẹ), 3.5 - 7.0 m/s² (cạy cửa/rung mạnh), trên 7.0 m/s² (đập phá/va chạm mạnh).
+- Động cơ Hợp nhất Đa cảm biến (Sensor Fusion Engine):
+  + Công thức tính điểm nguy cơ tổng hợp: FusedScore = 0.40 * Motion + 0.40 * Sound + 0.20 * Vision kết hợp thuật toán Peak Detection.
+  + Quy tắc cộng hưởng độc quyền (Synergy Boost): Nếu đồng thời xảy ra rung lắc mạnh VÀ âm thanh nguy hiểm trong vòng 1.5 giây -> Điểm nguy cơ lập tức nhảy vọt lên 1.0 (Mức Nguy Cấp - Critical).
+
+
+4. PHÂN HỆ DỊCH VỤ CHẠY NGẦM & GỌI ĐIỆN SIM KHẨN CẤP (GIAI ĐOẠN 2)
+--------------------------------------------------------------------------------
+- Dịch vụ chạy ngầm bền bỉ (Android Foreground Service):
+  + Khai báo Foreground Service Type "camera|microphone" đạt chuẩn Android 14 (API 34).
+  + Duy trì bộ vi xử lý hoạt động khi màn hình tắt nhờ PowerManager.PARTIAL_WAKE_LOCK (thời lượng tối đa 8 giờ).
+  + Cơ chế tự phục hồi START_STICKY: Tự động khởi động lại dịch vụ nếu hệ điều hành giải phóng RAM.
+  + Khả năng tự hồi sinh (Self-Resurrection): Dùng AlarmManager tự động bật lại ứng dụng sau 2 giây nếu người dùng vô tình vuốt tắt ứng dụng khỏi danh sách đa nhiệm (Recent Apps).
+  + Khởi động cùng hệ thống (SmartGuardBootReceiver): Tự động bật lại dịch vụ canh gác ngay khi người dùng khởi động lại máy điện thoại (RECEIVE_BOOT_COMPLETED).
+  + Hộp thoại xin quyền miễn trừ tối ưu hóa pin (ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS) để chống lại chế độ ngủ sâu (Doze Mode).
+- Cuộc gọi khẩn cấp tự động trực tiếp qua SIM (SIM Direct Call):
+  + Cơ chế gọi trực tiếp Native Intent.ACTION_CALL qua thẻ SIM vật lý của điện thoại, đổ chuông ngay tới số người thân mà không cần thao tác bấm phím.
+  + Cơ chế dự phòng 3 cấp an toàn (3-Tier Fallback):
+    * Cấp 1: Gọi điện thoại trực tiếp qua SIM bằng ACTION_CALL.
+    * Cấp 2: Nếu chưa được cấp quyền CALL_PHONE -> Tự động chuyển sang ACTION_DIAL (mở sẵn bàn phím gọi với số điện thoại người thân đã điền sẵn).
+    * Cấp 3: Nếu cuộc gọi bị bận hoặc mất sóng thoại -> Tự động gửi tin nhắn SMS khẩn cấp (SmsManager) kèm thông tin và thời gian xảy ra đột nhập.
+  + Danh bạ người thân ưu tiên: Tự động chọn liên hệ số 1 trong danh sách để gọi, hỗ trợ thêm/xóa/sửa và loại bỏ hoàn toàn các số mẫu ảo.
+
+
+5. PHÂN HỆ ĐIỀU PHỐI BÁO ĐỘNG TỰ ĐỘNG (ALERT ORCHESTRATOR)
+--------------------------------------------------------------------------------
+- Chuỗi phản ứng đồng bộ tức thời khi điểm nguy cơ vượt ngưỡng (FusedScore >= 0.65):
+  + Rung máy vật lý theo nhịp điệu mã Morse SOS khẩn cấp.
+  + Phát giọng nói AI đe dọa kẻ đột nhập bằng tiếng Việt ("Cảnh báo! Phát hiện xâm nhập trái phép...").
+  + Cập nhật thông báo khẩn cấp màu đỏ trên thanh thông báo Android kèm thời gian thực.
+  + Bắn gói tin POST /api/alerts/trigger lên máy chủ Backend.
+  + Gửi thông báo kèm ảnh chụp hiện trường về kênh Discord Webhook của gia đình.
+  + Tự động gọi điện khẩn cấp và gửi tin nhắn SMS đến số điện thoại người thân.
+- Chức năng "Tắt còi / Dừng báo động":
+  + Nút bấm khẩn cấp trên giao diện cho phép chủ nhà ngắt ngay lập tức còi hú, giọng đọc TTS và rung máy.
+- Chức năng "Tạm nghỉ / Báo động ngủ" (Snooze): Cho phép tạm ngừng cảnh báo trong 5 phút, 15 phút, 30 phút hoặc 1 giờ khi có khách hoặc người nhà về.
+
+
+6. PHÂN HỆ WEB DASHBOARD & TRUNG TÂM QUẢN TRỊ TẬP TRUNG
+--------------------------------------------------------------------------------
+- Giám sát trạng thái hoạt động:
+  + Hiển thị thời gian thực số lượng camera kết nối, trạng thái vũ trang (Armed/Disarmed).
+  + Tương tác đổi chế độ an ninh thích ứng: Chế độ Ở nhà (Home), Đi vắng (Away), Ban đêm (Night).
+- Còi hú cảnh báo Web Audio: Trình duyệt tự động hú còi báo động và hiện thông báo pop-up đỏ khi có sự cố.
+- Dòng thời gian sự kiện (Security Events & Timeline):
+  + Lưu trữ toàn bộ lịch sử các vụ xâm nhập, phân loại theo mức độ nghiêm trọng (Danger, Warning, Info).
+  + Xem ảnh bằng chứng chụp từ camera điện thoại với độ sắc nét cao.
+  + Hiển thị thời gian chuẩn múi giờ Việt Nam (UTC+7).
+- Dữ liệu sạch 100%:
+  + Đã loại bỏ hoàn toàn các thiết bị mẫu và sự kiện ảo (alt-1, alt-2, alt-3).
+  + Huy hiệu số thông báo trên biểu tượng chuông hiển thị chính xác theo số lượng sự kiện thực tế trong cơ sở dữ liệu.
+
+
+7. TỐI ƯU HÓA GIAO DIỆN & TRẢI NGHIỆM NGƯỜI DÙNG (UI/UX)
+--------------------------------------------------------------------------------
+- Phong cách thiết kế:
+  + Bộ nhận diện thương hiệu Capybara Security Guard thân thiện, tông màu hiện đại (Cam Pastel, Tím Hoàng Gia, Xanh An Ninh).
+- Khắc phục triệt để các lỗi hiển thị:
+  + Khắc phục hoàn toàn lỗi tràn viền (RenderFlex overflow) trên màn hình Trang chủ (Dashboard).
+  + Khắc phục lỗi tràn viền 29 pixels trên danh sách Lịch sử cảnh báo (Alerts History).
+  + Khắc phục lỗi tràn viền 12 pixels và hiển thị rõ ràng nút chọn phân quyền trong hộp thoại Thêm tài khoản Quản trị (Admin).
+  + Đảm bảo giao diện tương thích hoàn hảo với mọi kích thước màn hình smartphone từ 5.0 inch đến 6.7 inch.
+
+
+III. KẾT LUẬN & ĐÁNH GIÁ ĐỒ ÁN
+--------------------------------------------------------------------------------
+- Hệ thống SmartGuard Unified đã được xây dựng hoàn chỉnh, kết nối đồng bộ và xuyên suốt từ Tầng Cảm biến phần cứng Thiết bị di động -> Trí tuệ nhân tạo xử lý tại biên (Edge AI) -> Dịch vụ chạy ngầm bền bỉ -> Máy chủ Đám mây (Cloud Server) -> Cơ sở dữ liệu MSSQL -> Kênh thông báo Discord & Viễn thông SIM -> Trung tâm điều khiển Web Dashboard.
+- Đáp ứng vượt mức toàn bộ các yêu cầu đặt ra của đề tài Đồ án Lập trình Thiết bị Di động Chống trộm.
+================================================================================
+Người thực hiện: Nhóm 4 (Buổi chiều thứ 4)
+Đồ án: Ứng dụng Di động Chống trộm Thông minh SmartGuard Unified
+Năm học: 2026
+================================================================================
+

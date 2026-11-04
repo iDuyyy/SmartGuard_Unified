@@ -25,6 +25,9 @@ dependencies:
   record: ^7.1.2
   flutter_spinkit: ^5.2.0
   battery_plus: ^7.1.2
+  # Liên kết thành viên bằng mã QR
+  qr_flutter: ^4.1.0
+  mobile_scanner: ^7.0.1
 
 dev_dependencies:
   flutter_test:

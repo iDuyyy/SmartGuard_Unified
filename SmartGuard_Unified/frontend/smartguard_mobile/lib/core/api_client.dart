@@ -179,6 +179,12 @@ class ApiClient {
       return data;
     }
 
+    if (response.statusCode == 401) {
+      // Token hết hạn / bị thu hồi: xóa phiên và đưa người dùng về màn hình đăng nhập
+      SessionManager.handleUnauthorized();
+      throw const ApiException('Phiên đăng nhập đã hết hạn hoặc không hợp lệ. Vui lòng đăng nhập lại.', 401);
+    }
+
     var errorMessage = 'Yêu cầu thất bại';
     if (data is Map) {
       if (data.containsKey('message') && data['message'] != null && data['message'].toString().isNotEmpty) {
@@ -304,5 +310,27 @@ class ApiClient {
       }
     }
     return false;
+  }
+
+  /// Kiểm tra JWT token hiện tại còn hiệu lực với máy chủ hay không
+  static Future<bool> validateCurrentToken() async {
+    final token = SessionManager.token;
+    if (token == null || token.isEmpty) return false;
+
+    try {
+      final statusUri = AppConfig.buildUri('/api/status');
+      final res = await _client.get(
+        statusUri,
+        headers: {
+          'Accept': 'application/json',
+          'Authorization': 'Bearer $token',
+          'X-Tunnel-Skip-AntiPhishing-Page': 'true',
+        },
+      ).timeout(const Duration(seconds: 4));
+
+      return res.statusCode >= 200 && res.statusCode < 300;
+    } catch (_) {
+      return true;
+    }
   }
 }

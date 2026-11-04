@@ -24,82 +24,115 @@ class _LoginScreenState extends State<LoginScreen> {
   bool _deviceSupportsBiometric = false;
   UserModel? _savedBioUser;
 
+  bool _bioBusy = false;
+  bool _autoPromptDone = false;
+
   @override
   void initState() {
     super.initState();
     _checkBiometric();
   }
 
+  @override
+  void dispose() {
+    _identifierController.dispose();
+    _passwordController.dispose();
+    super.dispose();
+  }
+
   Future<void> _checkBiometric() async {
     final canBio = await AuthService.canUseBiometric();
-    final savedUser = await SessionManager.getSavedBiometricUser();
-    if (mounted) {
-      setState(() {
-        _deviceSupportsBiometric = canBio;
-        _savedBioUser = savedUser;
-        if (savedUser != null && _identifierController.text.isEmpty) {
-          _identifierController.text = savedUser.email.isNotEmpty
-              ? savedUser.email
-              : savedUser.username;
-        }
-      });
-    }
+    final enabled = await SessionManager.isBiometricEnabled();
+    final savedUser = enabled ? await SessionManager.getSavedBiometricUser() : null;
+    if (!mounted) return;
 
-    if (canBio && SessionManager.isLoggedIn) {
-      final isEnabled = await SessionManager.isBiometricEnabled();
-      if (isEnabled && mounted) {
-        _triggerBiometricLogin();
+    setState(() {
+      _deviceSupportsBiometric = canBio;
+      _savedBioUser = savedUser;
+      if (savedUser != null && _identifierController.text.isEmpty) {
+        _identifierController.text = savedUser.email.isNotEmpty ? savedUser.email : savedUser.username;
       }
+    });
+
+    // Tự mở hộp thoại vân tay đúng 1 lần khi vào màn hình (nếu đã liên kết)
+    if (canBio && savedUser != null && !SessionManager.isLoggedIn && !_autoPromptDone) {
+      _autoPromptDone = true;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _triggerBiometricLogin(silentCancel: true);
+      });
     }
   }
 
-  Future<void> _triggerBiometricLogin() async {
-    final savedUser = await SessionManager.getSavedBiometricUser();
-    if (savedUser == null) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text(
-            'Chưa có tài khoản nào liên kết vân tay trên máy này. Vui lòng đăng nhập bằng mật khẩu lần đầu tiên!',
-          ),
-          backgroundColor: AppTheme.statusWarning,
-        ),
-      );
-      return;
-    }
-
-    final success = await AuthService.authenticateBiometric();
-    if (!success || !mounted) return;
-
-    final restored = await SessionManager.restoreBiometricSession();
+  void _showBioMessage(String text, Color color) {
     if (!mounted) return;
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(SnackBar(content: Text(text), backgroundColor: color));
+  }
 
-    if (!restored) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text(
-            'Phiên đăng nhập sinh trắc học đã hết hạn. Vui lòng đăng nhập lại bằng mật khẩu.',
-          ),
-          backgroundColor: AppTheme.statusAlarm,
-        ),
+  Future<void> _triggerBiometricLogin({bool silentCancel = false}) async {
+    if (_bioBusy) return;
+    setState(() => _bioBusy = true);
+    try {
+      final savedUser = await SessionManager.getSavedBiometricUser();
+      if (savedUser == null || !await SessionManager.isBiometricEnabled()) {
+        _showBioMessage(
+          'Chưa có tài khoản nào bật đăng nhập vân tay trên máy này. Hãy đăng nhập bằng mật khẩu, '
+          'sau đó bật "Đăng nhập bằng Vân tay" trong Cài đặt.',
+          AppTheme.statusWarning,
+        );
+        return;
+      }
+
+      final displayName = savedUser.username.isNotEmpty
+          ? savedUser.username
+          : (savedUser.email.isNotEmpty ? savedUser.email : 'tài khoản đã liên kết');
+
+      final auth = await AuthService.authenticateBiometric(
+        reason: 'Quét vân tay để đăng nhập vào tài khoản $displayName',
       );
-      return;
+      if (auth.busy) return;
+      if (!auth.success) {
+        final cancelled = (auth.message ?? '').contains('hủy');
+        if (!(silentCancel && cancelled)) {
+          _showBioMessage(auth.message ?? 'Xác thực vân tay thất bại.', AppTheme.statusWarning);
+        }
+        return;
+      }
+
+      final result = await SessionManager.restoreBiometricSession();
+      if (!mounted) return;
+
+      switch (result.status) {
+        case BiometricRestoreStatus.success:
+          break;
+        case BiometricRestoreStatus.notLinked:
+          _showBioMessage('Chưa có tài khoản liên kết vân tay. Vui lòng đăng nhập bằng mật khẩu.', AppTheme.statusAlarm);
+          return;
+        case BiometricRestoreStatus.tokenMissing:
+        case BiometricRestoreStatus.tokenExpired:
+          _showBioMessage(
+            'Phiên vân tay của $displayName đã hết hạn. Vui lòng đăng nhập mật khẩu 1 lần để làm mới, '
+            'vân tay sẽ tiếp tục dùng được.',
+            AppTheme.statusWarning,
+          );
+          return;
+        case BiometricRestoreStatus.accountMismatch:
+          _showBioMessage('Dữ liệu vân tay không khớp tài khoản $displayName. Vui lòng đăng nhập bằng mật khẩu.', AppTheme.statusAlarm);
+          return;
+      }
+
+      final user = result.user ?? savedUser;
+      final name = user.username.isNotEmpty ? user.username : (user.email.isNotEmpty ? user.email : displayName);
+      _showBioMessage('Xin chào $name! Đăng nhập vân tay thành công.', AppTheme.statusArmed);
+
+      Navigator.of(context).pushAndRemoveUntil(
+        MaterialPageRoute(builder: (_) => const HomeShell()),
+        (route) => false,
+      );
+    } finally {
+      if (mounted) setState(() => _bioBusy = false);
     }
-
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(
-          'Xin chào ${savedUser.username} (${savedUser.role})! Đăng nhập vân tay thành công.',
-        ),
-        backgroundColor: AppTheme.statusArmed,
-        duration: const Duration(seconds: 2),
-      ),
-    );
-
-    Navigator.of(context).pushAndRemoveUntil(
-      MaterialPageRoute(builder: (_) => const HomeShell()),
-      (route) => false,
-    );
   }
 
   Future<void> _submitLogin() async {
@@ -200,9 +233,15 @@ class _LoginScreenState extends State<LoginScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final bioLabel = _savedBioUser != null
-        ? 'Đăng nhập vân tay (${_savedBioUser!.username})'
-        : 'Đăng nhập bằng Sinh trắc học';
+    final bioName = _savedBioUser != null
+        ? (_savedBioUser!.username.isNotEmpty
+            ? _savedBioUser!.username
+            : (_savedBioUser!.email.isNotEmpty ? _savedBioUser!.email : null))
+        : null;
+
+    final bioLabel = bioName != null && bioName.isNotEmpty
+        ? 'Đăng nhập vân tay ($bioName)'
+        : 'Đăng nhập bằng Vân tay';
 
     return Scaffold(
       backgroundColor: AppTheme.creamBg,
@@ -371,8 +410,10 @@ class _LoginScreenState extends State<LoginScreen> {
               const SizedBox(height: 12),
 
               OutlinedButton.icon(
-                onPressed: _deviceSupportsBiometric ? _triggerBiometricLogin : null,
-                icon: const Icon(Icons.fingerprint, color: AppTheme.primaryNavy, size: 24),
+                onPressed: (_deviceSupportsBiometric && !_bioBusy) ? () => _triggerBiometricLogin() : null,
+                icon: _bioBusy
+                    ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2))
+                    : const Icon(Icons.fingerprint, color: AppTheme.primaryNavy, size: 24),
                 label: Text(
                   bioLabel,
                   style: const TextStyle(color: AppTheme.primaryNavy, fontWeight: FontWeight.bold),

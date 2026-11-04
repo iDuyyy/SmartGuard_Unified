@@ -33,6 +33,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   String _username = 'Người bảo vệ';
   String _email = 'user@smartguard.local';
   bool _isAdmin = false;
+  bool _biometricEnabled = false;
 
   @override
   void initState() {
@@ -49,13 +50,78 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
   Future<void> _loadUserInfo() async {
     final user = await SessionManager.getCurrentUser();
-    if (user != null && mounted) {
+    final bioEnabled = await SessionManager.isBiometricLinkedToCurrentUser();
+    if (mounted) {
       setState(() {
-        _username = user.username;
-        _email = user.email;
-        _isAdmin = user.role.toLowerCase() == 'admin';
+        if (user != null) {
+          _username = user.username.isNotEmpty ? user.username : 'Chủ nhà';
+          _email = user.email.isNotEmpty ? user.email : 'Chưa cập nhật email';
+          _isAdmin = user.role.toLowerCase() == 'admin';
+        }
+        _biometricEnabled = bioEnabled;
       });
     }
+  }
+
+  Future<void> _toggleBiometric(bool value) async {
+    if (value) {
+      if (!SessionManager.isLoggedIn) {
+        _showSnack('Vui lòng đăng nhập trước khi bật vân tay.', AppTheme.statusWarning);
+        return;
+      }
+      final canBio = await AuthService.canUseBiometric();
+      if (!canBio) {
+        _showSnack('Thiết bị không hỗ trợ hoặc chưa đăng ký sinh trắc học.', AppTheme.statusAlarm);
+        return;
+      }
+      final auth = await AuthService.authenticateBiometric(
+        reason: 'Quét vân tay để liên kết với tài khoản $_email',
+      );
+      if (!auth.success) {
+        if (!auth.busy) {
+          _showSnack(auth.message ?? 'Xác thực vân tay thất bại.', AppTheme.statusWarning);
+        }
+        return;
+      }
+      final ok = await SessionManager.enableBiometricForCurrentUser();
+      if (!ok) {
+        _showSnack('Không lưu được liên kết vân tay. Vui lòng đăng nhập lại rồi thử lại.', AppTheme.statusAlarm);
+        return;
+      }
+      if (mounted) setState(() => _biometricEnabled = true);
+      _showSnack('Đã bật đăng nhập vân tay cho tài khoản $_email', AppTheme.statusArmed);
+    } else {
+      final confirm = await showDialog<bool>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+          title: const Text('Tắt đăng nhập vân tay'),
+          content: const Text(
+            'Liên kết vân tay của tài khoản này sẽ bị xóa khỏi thiết bị. '
+            'Lần sau bạn phải đăng nhập bằng mật khẩu. Tiếp tục?',
+          ),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Hủy')),
+            ElevatedButton(
+              style: ElevatedButton.styleFrom(backgroundColor: AppTheme.coralPink),
+              onPressed: () => Navigator.pop(ctx, true),
+              child: const Text('Tắt vân tay', style: TextStyle(color: Colors.white)),
+            ),
+          ],
+        ),
+      );
+      if (confirm != true) return;
+      await AuthService.unlinkBiometric();
+      if (mounted) setState(() => _biometricEnabled = false);
+      _showSnack('Đã xóa liên kết đăng nhập vân tay trên thiết bị này.', AppTheme.statusArmed);
+    }
+  }
+
+  void _showSnack(String text, Color color) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(text), backgroundColor: color),
+    );
   }
 
   Future<void> _testConnection() async {
@@ -390,7 +456,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
             Text('Đăng xuất'),
           ],
         ),
-        content: const Text('Bạn có chắc chắn muốn đăng xuất khỏi SmartGuard? (Tài khoản vẫn được ghi nhớ cho đăng nhập Vân tay lần sau).'),
+        content: Text(
+          _biometricEnabled
+              ? 'Bạn có chắc chắn muốn đăng xuất? Liên kết vân tay vẫn được giữ, lần sau bạn có thể đăng nhập lại bằng vân tay.'
+              : 'Bạn có chắc chắn muốn đăng xuất khỏi SmartGuard?',
+        ),
         actions: [
           TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Hủy', style: TextStyle(color: AppTheme.textSecondary))),
           ElevatedButton(
@@ -644,6 +714,18 @@ class _SettingsScreenState extends State<SettingsScreen> {
                         },
                       ),
 
+                      _buildDivider(),
+                      _buildMenuItem(
+                        icon: Icons.fingerprint,
+                        iconColor: AppTheme.primaryNavy,
+                        title: 'Đăng nhập bằng Vân tay / Face ID',
+                        badge: Switch(
+                          value: _biometricEnabled,
+                          activeColor: AppTheme.royalPurple,
+                          onChanged: _toggleBiometric,
+                        ),
+                        onTap: () => _toggleBiometric(!_biometricEnabled),
+                      ),
                       _buildDivider(),
                       _buildMenuItem(
                         icon: Icons.dns_outlined,

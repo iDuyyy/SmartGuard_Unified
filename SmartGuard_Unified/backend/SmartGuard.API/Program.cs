@@ -13,6 +13,85 @@ using SmartGuard.API.Services.Security;
 
 var builder = WebApplication.CreateBuilder(args);
 
+// 0. Hỗ trợ dọn sạch Database bằng lệnh: dotnet run --project backend/SmartGuard.API -- --clean-db
+if (args.Contains("--clean-db"))
+{
+    var rawCs = builder.Configuration.GetConnectionString("DefaultConnection")
+        ?? "Server=DESKTOP-IIQVP6N;Database=SmartGuard_Unified_DB;Trusted_Connection=True;TrustServerCertificate=True;";
+    var cleanCs = rawCs.Contains("Connect Timeout=", StringComparison.OrdinalIgnoreCase)
+        ? rawCs
+        : $"{rawCs.TrimEnd(';')};Connect Timeout=30;";
+    var optBuilder = new DbContextOptionsBuilder<SmartGuardDbContext>();
+    optBuilder.UseSqlServer(cleanCs, sql =>
+        sql.EnableRetryOnFailure(maxRetryCount: 3, maxRetryDelay: TimeSpan.FromSeconds(3), errorNumbersToAdd: null));
+    using var cleanDb = new SmartGuardDbContext(optBuilder.Options);
+
+    Console.WriteLine($"Connection string: {cleanCs.Split(';')[0]}");
+    Console.WriteLine("Connecting to database to purge and verify all tables...");
+    try
+    {
+        await cleanDb.Database.ExecuteSqlRawAsync(@"
+            DELETE FROM [EvidenceImages];
+            DELETE FROM [AlertEvents];
+            DELETE FROM [MemberAccesses];
+            DELETE FROM [AdaptiveZoneRules];
+            DELETE FROM [Devices];
+            DELETE FROM [Zones];
+            DELETE FROM [AdaptiveProfiles];
+            DELETE FROM [OtpChallenges];
+            DELETE FROM [Users];
+        ");
+        Console.WriteLine("✅ TOÀN BỘ BẢNG TRONG DATABASE ĐÃ ĐƯỢC LÀM SẠCH VỀ 0 BẢN GHI!");
+
+        var usersCount = await cleanDb.Users.CountAsync();
+        var devicesCount = await cleanDb.Devices.CountAsync();
+        var alertsCount = await cleanDb.AlertEvents.CountAsync();
+        var zonesCount = await cleanDb.Zones.CountAsync();
+        var evidenceCount = await cleanDb.EvidenceImages.CountAsync();
+        var otpsCount = await cleanDb.OtpChallenges.CountAsync();
+        var memberAccessCount = await cleanDb.MemberAccesses.CountAsync();
+        var adaptiveProfilesCount = await cleanDb.AdaptiveProfiles.CountAsync();
+        var adaptiveRulesCount = await cleanDb.AdaptiveZoneRules.CountAsync();
+
+        Console.WriteLine($"📊 VERIFICATION COUNTS: Users={usersCount}, Devices={devicesCount}, Alerts={alertsCount}, Zones={zonesCount}, EvidenceImages={evidenceCount}, OTPs={otpsCount}, MemberAccess={memberAccessCount}, Profiles={adaptiveProfilesCount}, Rules={adaptiveRulesCount}");
+    }
+    catch (Exception ex)
+    {
+        Console.WriteLine($"❌ Error cleaning database: {ex.Message}");
+        if (ex.InnerException != null) Console.WriteLine($"   Inner: {ex.InnerException.Message}");
+    }
+    return;
+}
+
+// 0. Hỗ trợ dọn sạch Database bằng lệnh: dotnet run --project backend/SmartGuard.API -- --clean-db
+if (args.Contains("--clean-db"))
+{
+    var rawCs = builder.Configuration.GetConnectionString("DefaultConnection")
+        ?? "Server=DESKTOP-IIQVP6N;Database=SmartGuard_Unified_DB;Trusted_Connection=True;TrustServerCertificate=True;";
+    var cleanCs = rawCs.Contains("Connect Timeout=", StringComparison.OrdinalIgnoreCase)
+        ? rawCs
+        : $"{rawCs.TrimEnd(';')};Connect Timeout=30;";
+    var optBuilder = new DbContextOptionsBuilder<SmartGuardDbContext>();
+    optBuilder.UseSqlServer(cleanCs, sql =>
+        sql.EnableRetryOnFailure(maxRetryCount: 3, maxRetryDelay: TimeSpan.FromSeconds(3), errorNumbersToAdd: null));
+    using var cleanDb = new SmartGuardDbContext(optBuilder.Options);
+
+    Console.WriteLine("Connecting to Somee MSSQL to purge all tables...");
+    await cleanDb.Database.ExecuteSqlRawAsync(@"
+        DELETE FROM [EvidenceImages];
+        DELETE FROM [AlertEvents];
+        DELETE FROM [MemberAccesses];
+        DELETE FROM [AdaptiveZoneRules];
+        DELETE FROM [Devices];
+        DELETE FROM [Zones];
+        DELETE FROM [AdaptiveProfiles];
+        DELETE FROM [OtpChallenges];
+        DELETE FROM [Users];
+    ");
+    Console.WriteLine("✅ TOÀN BỘ BẢNG TRONG DATABASE ĐÃ ĐƯỢC LÀM SẠCH VỀ 0 BẢN GHI!");
+    return;
+}
+
 // 1. Cấu hình Database EF Core (SQL Server) với timeout ngắn để tránh treo ứng dụng
 var rawConnectionString = builder.Configuration.GetConnectionString("DefaultConnection")
     ?? "Server=DESKTOP-IIQVP6N;Database=SmartGuard_Unified_DB;Trusted_Connection=True;TrustServerCertificate=True;";
@@ -137,7 +216,7 @@ builder.Services.AddSwaggerGen(c =>
 
 var app = builder.Build();
 
-// 7. Khởi tạo Database & Seed dữ liệu Admin ban đầu ở luồng nền sau khi Kestrel sẵn sàng
+// 7. Khởi tạo / Migrate Database ở luồng nền sau khi Kestrel sẵn sàng (Không nạp dữ liệu mẫu)
 app.Lifetime.ApplicationStarted.Register(() =>
 {
     _ = Task.Run(async () =>
@@ -146,26 +225,10 @@ app.Lifetime.ApplicationStarted.Register(() =>
         var services = scope.ServiceProvider;
         var logger = services.GetRequiredService<ILogger<Program>>();
         var db = services.GetRequiredService<SmartGuardDbContext>();
-        var tokenService = services.GetRequiredService<ITokenService>();
-
         try
         {
             await db.Database.MigrateAsync();
-
-            if (!await db.Users.AnyAsync(u => u.Role == "Admin"))
-            {
-                var defaultAdmin = new User
-                {
-                    Email = "admin@smartguard.local",
-                    Username = "admin",
-                    PasswordHash = tokenService.HashPassword("Admin123@"),
-                    Role = "Admin",
-                    EmailVerified = true
-                };
-                db.Users.Add(defaultAdmin);
-                await db.SaveChangesAsync();
-                logger.LogInformation("✅ Đã khởi tạo tài khoản quản trị mặc định: admin@smartguard.local / Admin123@");
-            }
+            logger.LogInformation("✅ Database migration kiểm tra hoàn tất. Không nạp dữ liệu mẫu.");
         }
         catch (Exception ex)
         {

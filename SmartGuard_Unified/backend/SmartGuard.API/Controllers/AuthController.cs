@@ -59,7 +59,8 @@ namespace SmartGuard.API.Controllers
                 if (await _db.Users.AnyAsync(u => u.Username == normalizedUsername))
                     return BadRequest(new { message = "Tên đăng nhập này đã tồn tại." });
 
-                var role = NormalizeRole(dto.Role);
+                var isFirstUser = !await _db.Users.AnyAsync();
+                var role = isFirstUser ? "Admin" : NormalizeRole(dto.Role);
 
                 var user = new User
                 {

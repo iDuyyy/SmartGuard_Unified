@@ -234,7 +234,12 @@ class _AdminScreenState extends State<AdminScreen>
             children: [
               Icon(Icons.person_add, color: AppTheme.primaryBlue),
               SizedBox(width: 8),
-              Text('Thêm tài khoản mới'),
+              Expanded(
+                child: Text(
+                  'Thêm tài khoản mới',
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
             ],
           ),
           content: SingleChildScrollView(
@@ -300,8 +305,8 @@ class _AdminScreenState extends State<AdminScreen>
                     children: [
                       Expanded(
                         child: ChoiceChip(
-                          avatar: const Icon(Icons.person, size: 16),
-                          label: const Text('Người dùng (User)'),
+                          avatar: const Icon(Icons.person_outline, size: 16),
+                          label: const Text('Người dùng', style: TextStyle(fontSize: 12)),
                           selected: selectedRole == 'Owner',
                           selectedColor: AppTheme.primaryBlue.withValues(
                             alpha: 0.2,
@@ -316,10 +321,10 @@ class _AdminScreenState extends State<AdminScreen>
                       Expanded(
                         child: ChoiceChip(
                           avatar: const Icon(
-                            Icons.admin_panel_settings,
+                            Icons.admin_panel_settings_outlined,
                             size: 16,
                           ),
-                          label: const Text('Quản trị (Admin)'),
+                          label: const Text('Quản trị', style: TextStyle(fontSize: 12)),
                           selected: selectedRole == 'Admin',
                           selectedColor: const Color(
                             0xFF7C3AED,
@@ -417,7 +422,12 @@ class _AdminScreenState extends State<AdminScreen>
             children: [
               const Icon(Icons.edit, color: AppTheme.primaryBlue),
               const SizedBox(width: 8),
-              Text('Sửa: ${user.username}'),
+              Expanded(
+                child: Text(
+                  'Sửa: ${user.username}',
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
             ],
           ),
           content: SingleChildScrollView(
@@ -692,7 +702,12 @@ class _AdminScreenState extends State<AdminScreen>
           children: [
             Icon(Icons.face_retouching_natural, color: AppTheme.statusArmed),
             SizedBox(width: 8),
-            Text('Thêm Người Quen'),
+            Expanded(
+              child: Text(
+                'Thêm Người Quen',
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
           ],
         ),
         content: Column(

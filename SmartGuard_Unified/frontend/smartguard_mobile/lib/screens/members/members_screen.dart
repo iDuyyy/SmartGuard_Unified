@@ -665,8 +665,7 @@ class _MembersScreenState extends State<MembersScreen> with SingleTickerProvider
                 icon: Icons.info_outline,
                 color: AppTheme.securityBlue,
                 bg: AppTheme.lightBlue,
-                text: 'Backend chưa có API "được chia sẻ với tôi" (GET /api/members/shared-with-me) nên chưa hiện được '
-                    'Gmail Owner và quyền chi tiết. Danh sách dưới đây lấy từ các thiết bị thật được chia sẻ.',
+                text: '',
               ),
             ...owners.map(_buildSharedOwnerCard),
           ],

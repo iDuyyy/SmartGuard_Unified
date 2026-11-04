@@ -10,7 +10,7 @@ class MemberFeatureUnsupported implements Exception {
 
   @override
   String toString() =>
-      'Backend chưa hỗ trợ "$feature" (cần API $endpoint). Chức năng này chưa thể hoạt động.';
+      '';
 }
 
 /// Yêu cầu liên kết Member → Owner (chỉ có khi backend bổ sung API).
